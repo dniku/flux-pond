@@ -46,7 +46,12 @@
   #strain-fill { background: #ff8f6b; }
   #hunger-fill { background: #8ce28a; }
 
-  #phenomena { top: 14px; right: 14px; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; padding: 0; background: none; border: 0; backdrop-filter: none; }
+  /* Not `.panel`s: no chrome of their own, but they still need the fixed
+     positioning that rule would have supplied, and without it both fell back to
+     static layout at the top-left of the document, under #status -- which made
+     the buttons unclickable and the phenomenon badges invisible. Found only by
+     a real browser hit-testing a click. */
+  #phenomena { position: fixed; top: 14px; right: 14px; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; padding: 0; background: none; border: 0; backdrop-filter: none; }
   .badge {
     background: var(--panel); border: 1px solid rgba(87, 224, 208, 0.5); color: var(--accent);
     border-radius: 999px; padding: 4px 11px; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;
@@ -60,7 +65,7 @@
     background: rgba(255, 255, 255, 0.09); border: 1px solid rgba(255, 255, 255, 0.14);
     border-radius: 4px; padding: 0 5px; font: inherit; color: var(--ink);
   }
-  #buttons { bottom: 14px; right: 14px; display: flex; gap: 8px; padding: 0; background: none; border: 0; backdrop-filter: none; }
+  #buttons { position: fixed; bottom: 14px; right: 14px; display: flex; gap: 8px; padding: 0; background: none; border: 0; backdrop-filter: none; }
   button {
     font: inherit; color: var(--ink); background: var(--panel); cursor: pointer;
     border: 1px solid rgba(87, 224, 208, 0.3); border-radius: 10px; padding: 7px 13px;
