@@ -18,6 +18,11 @@ const VIEW = {
 };
 
 /* Creature proportions, as fractions of the body's projected radius. */
+/* Plankton are drawn in pixels: a fraction of viewport height keeps them legible
+ * at any size without importing the simulation's idea of a metre. */
+const MOTE_FRACTION = 0.0045;
+const POP_LIFE = 0.7;
+
 const CORE_SCALE = 0.56;
 const FIN_REACH = 0.66;
 const FIN_FLARE = 0.55;
@@ -361,6 +366,53 @@ function drawEye(context, geometry, time) {
 }
 
 /*
+ * The plankton layer: a faint band, the motes in it, and the rings left where
+ * the creature bit one. Everything is read off the World through its own
+ * accessor, so the renderer never learns that positions come from a hash, and
+ * the layer is drawn only when the simulation has one.
+ */
+function drawPlankton(context, camera, world) {
+  if (world.foodEnabled !== true) {
+    return;
+  }
+  const top = camera.screenY(world.foodBand.top);
+  const bottom = camera.screenY(world.foodBand.bottom);
+  const haze = context.createLinearGradient(0, top, 0, bottom);
+  haze.addColorStop(0.0, 'hsla(152,62%,58%,0)');
+  haze.addColorStop(0.42, 'hsla(152,66%,60%,0.085)');
+  haze.addColorStop(1.0, 'hsla(152,62%,55%,0)');
+  context.fillStyle = haze;
+  context.fillRect(0, top, camera.width, Math.max(1, bottom - top));
+
+  const unit = Math.max(1.1, camera.height * MOTE_FRACTION);
+  const halfView = VIEW.viewWidth / 2 + 0.25;
+  const target = world.foodTarget;
+  world.forEachMote(camera.x - halfView, camera.x + halfView, (id, x, y, size) => {
+    const px = camera.screenX(x);
+    const py = camera.screenY(y);
+    const r = unit * (0.7 + 0.6 * size);
+    const lit = target !== null && target.id === id ? 1.0 : 0.6;
+    context.beginPath();
+    context.arc(px, py, r * 3.4, 0, Math.PI * 2);
+    context.fillStyle = hsl(146, 88, 72, 0.055 * lit);
+    context.fill();
+    context.beginPath();
+    context.arc(px, py, r, 0, Math.PI * 2);
+    context.fillStyle = hsl(150, 80, 64 + 22 * lit, 0.45 + 0.45 * lit);
+    context.fill();
+  });
+
+  for (const pop of world.feedPops) {
+    const age = Math.min(1, Math.max(0, pop.age / POP_LIFE));
+    context.beginPath();
+    context.arc(camera.screenX(pop.x), camera.screenY(pop.y), 2 + 15 * age, 0, Math.PI * 2);
+    context.strokeStyle = hsl(150, 92, 82, 0.34 * (1 - age));
+    context.lineWidth = 1.2;
+    context.stroke();
+  }
+}
+
+/*
  * Cursor field. Colour encodes mode: warm = push, cool = pull. Radius is the
  * real influence radius from the simulation, so what you see is what acts.
  */
@@ -395,6 +447,7 @@ function render(context, world, camera, time) {
   drawWater(context, camera, world, time);
   drawSurface(context, camera, world.field);
   drawWake(context, camera, world.field);
+  drawPlankton(context, camera, world);
   drawCreature(context, camera, world.creature, time);
   drawCursor(context, camera, world.pointer);
   context.restore();

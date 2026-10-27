@@ -181,6 +181,23 @@ for (let cell = 0; cell < world.field.cells; cell += 1) {
   }
 }
 
+// Plankton layer: haze plus the motes themselves, through the World's accessor.
+if (world.foodEnabled) {
+  const bandTop = camera.screenY(world.foodBand.top);
+  const bandBottom = camera.screenY(world.foodBand.bottom);
+  raster.fillRows(bandTop, bandBottom, hslToRgb(152, 64, 34), 0.16);
+  const halfView = 1.7 + 0.25;
+  world.forEachMote(camera.x - halfView, camera.x + halfView, (id, x, y, size) => {
+    const radius = Math.max(1.2, HEIGHT * 0.0045 * (0.7 + 0.6 * size));
+    raster.fillDisc(camera.screenX(x), camera.screenY(y), radius * 2.6, [120, 230, 170], 0.12);
+    raster.fillDisc(camera.screenX(x), camera.screenY(y), radius, [205, 255, 215], 0.85);
+  });
+  for (const pop of world.feedPops) {
+    const age = Math.min(1, Math.max(0, pop.age / 0.7));
+    raster.fillDisc(camera.screenX(pop.x), camera.screenY(pop.y), 2 + 15 * age, [190, 255, 220], 0.3 * (1 - age));
+  }
+}
+
 // Creature. Every polygon below comes from the renderer's own geometry.
 const geometry = creatureGeometry(creature, camera);
 const hue = geometry.hue;
