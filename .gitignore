@@ -1,0 +1,5 @@
+# Scratch: generated previews, check output, tool working state.
+.tmp/
+
+# Runtime directory owned by whatever supervises this workspace.
+.run/
