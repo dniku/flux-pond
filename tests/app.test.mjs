@@ -312,6 +312,30 @@ await test('shift-key pointer pulls rather than pushes', async () => {
   assert(env.app.world.pointer.attract === false, 'pull mode stuck on after shift released');
 });
 
+/*
+ * The hint promises "press to push harder", and the ring on screen is painted
+ * from the same number the force is scaled by, so the two have to agree. This
+ * used to be a documentation bug: hovering already reached full pressure, which
+ * left nothing for pressing to add -- and made every tow a maximum-strength one.
+ */
+await test('pressing swells the pointer field; hovering alone does not', async () => {
+  const env = await bootApp();
+  const canvas = env.canvas;
+  const at = { clientX: 512, clientY: 300, bubbles: true };
+  canvas.dispatchEvent(new env.window.PointerEvent('pointermove', at));
+  step(env, 60);
+  const hover = env.app.world.pointer.pressure;
+  canvas.dispatchEvent(new env.window.PointerEvent('pointerdown', at));
+  step(env, 60);
+  const pressed = env.app.world.pointer.pressure;
+  canvas.dispatchEvent(new env.window.PointerEvent('pointerup', at));
+  step(env, 6);
+  const released = env.app.world.pointer.pressure;
+  assert(hover > 0.3 && hover < 0.8, `hover pressure should sit mid-range, got ${hover}`);
+  assert(pressed > hover + 0.2, `pressing did not swell the field: ${hover} -> ${pressed}`);
+  assert(released < pressed, `releasing did not let the field subside: ${pressed} -> ${released}`);
+});
+
 await test('pause stops the simulation; resume restarts it', async () => {
   const env = await bootApp();
   step(env, 20);

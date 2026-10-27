@@ -16,6 +16,16 @@ import { withFrequencies } from './audio.js';
 
 const { World, makeSpecimen, noteFrequency, layerAt } = FluxPond;
 
+/*
+ * Pointer influence, as the ramped `pressure` the World scales its force by.
+ * Hovering is deliberately weaker than pressing: the cursor ring is painted from
+ * the same number (see `drawCursor`), so the field on screen is the field being
+ * applied, and there is a stronger push left over when the button goes down.
+ */
+const PRESSURE_HOVER = 0.55;
+const PRESSURE_PRESS = 1.0;
+const PRESSURE_AWAY = 0.45;
+
 const FIXED_STEP = 1 / 120;
 const MAX_ACCUMULATOR = 0.25;
 const MAX_STEPS_PER_FRAME = 8;
@@ -69,6 +79,7 @@ class PondApp {
     this.fpsWindowMs = 0.0;
     this.pressure = 0.0;
     this.pointerInside = false;
+    this.pressing = false;
     this.droneStarted = false;
     this.badges = new Map();
     this.processedRipples = new WeakSet();
@@ -81,16 +92,20 @@ class PondApp {
     canvas.addEventListener('pointermove', (event) => this.onPointerMove(event));
     canvas.addEventListener('pointerdown', (event) => {
       canvas.setPointerCapture?.(event.pointerId);
+      this.pressing = true;
       this.onPointerMove(event);
       this.world.setPointer({ active: true });
       void this.enableAudio();
     });
     canvas.addEventListener('pointerup', (event) => {
       canvas.releasePointerCapture?.(event.pointerId);
-      this.pressure = 0.0;
+      // Release lets the field subside through the same ramp rather than
+      // snapping to zero, which is what the ramp below is for.
+      this.pressing = false;
     });
     canvas.addEventListener('pointerleave', () => {
       this.pointerInside = false;
+      this.pressing = false;
       this.world.setPointer({ active: false, pressure: 0.0 });
     });
     // Right-drag is "pull"; the browser menu would otherwise eat the gesture.
@@ -225,7 +240,11 @@ class PondApp {
    * releasing lets it subside; a binary on/off made the creature twitch.
    */
   advancePressure(dt) {
-    const target = this.pointerInside ? 1.0 : 0.45;
+    // Out of the canvas nothing is `active`, so the World applies no pointer
+    // force at any pressure; that target only decides how far the ring falls.
+    const target = !this.pointerInside
+      ? PRESSURE_AWAY
+      : (this.pressing ? PRESSURE_PRESS : PRESSURE_HOVER);
     const rate = this.pointerInside ? 5.0 : 2.5;
     this.pressure += (target - this.pressure) * Math.min(1.0, rate * dt);
     this.world.setPointer({ pressure: this.pressure });
