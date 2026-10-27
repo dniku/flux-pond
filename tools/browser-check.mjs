@@ -89,10 +89,12 @@ const png = loadOptional('pngjs');
 // Summed |dr|+|dg|+|db| above which a pixel counts as moved, and how much of
 // the frame may move before the golden fails. A panel appearing or disappearing
 // changes tens of thousands of pixels; text antialiasing changes few, slightly.
-// Measured on this host across two Chromium sessions of one build: identical to
-// the pixel for the two frames that show no badge, and 0.55% moved for the one
-// that does -- the 160 ms `pop` animation on a badge runs off wall time, not off
-// the seed. That is what the 3% budget is for.
+// Measured here: two Chromium sessions of one build agree to the pixel on all
+// three frames, and a third run moved 0.006 % of one -- the two digits of the fps
+// read-out, the only number on screen that describes the machine rather than the
+// seed. The last real source of drift was in the renderer, not the test: the
+// cursor ring pulsed off `Date.now()`, so one world painted two pictures. The
+// budget below is for antialiasing and font rendering on other hosts.
 const PIXEL_DELTA_LIMIT = 30;
 const DIFF_PIXEL_FRACTION = 0.03;
 const MEAN_DELTA_LIMIT = 1.5;
