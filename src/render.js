@@ -23,10 +23,28 @@ const VIEW = {
 const MOTE_FRACTION = 0.0045;
 const POP_LIFE = 0.7;
 
+/* Bubbles are shed every SHED seconds and live BUBBLE_LIFE; see `drawBubbles`. */
+const SHED = 0.13;
+const BUBBLE_LIFE = 0.95;
+
 const CORE_SCALE = 0.56;
 const FIN_REACH = 0.66;
 const FIN_FLARE = 0.55;
 const EYE_RATIO = 0.17;
+
+/* Pixels per world unit of depth: the same number `creatureGeometry` uses, so
+ * anything sized in world units agrees between the body and its surroundings. */
+function pixelsPerUnit(camera) {
+  return camera.height / (1 + VIEW.airAbove + VIEW.floorBelow);
+}
+
+/* Deterministic stand-in for randomness: a slot number in, 0-1 out. The renderer
+ * owns no state, so anything that has to look irregular has to be hashed from
+ * something the frame already knows. */
+function slotFraction(slot) {
+  const scaled = Math.sin(slot * 12.9898) * 43758.5453;
+  return scaled - Math.floor(scaled);
+}
 
 function hsl(hue, saturation, lightness, alpha) {
   return `hsla(${hue.toFixed(1)},${saturation.toFixed(1)}%,${lightness.toFixed(1)}%,${alpha.toFixed(3)})`;
@@ -94,6 +112,87 @@ function drawWater(context, camera, world, time) {
       context.fill();
     }
   }
+}
+
+/*
+ * Sunlight. Shafts are wedges from the waterline to the floor, one per slice of
+ * world x, swaying on two time scales so they never quite repeat. They are placed
+ * in world space and not screen space: a shaft is a place in the trench, and
+ * scrolling past one is part of the sense of moving through water.
+ */
+function drawSunlight(context, camera, time) {
+  const surfaceTop = camera.screenY(0.0);
+  const floor = camera.screenY(1.0);
+  if (!(floor > surfaceTop)) {
+    return;
+  }
+  const period = 1.25;
+  const first = Math.floor((camera.x - VIEW.viewWidth / 2) / period) - 1;
+  const last = Math.ceil((camera.x + VIEW.viewWidth / 2) / period) + 1;
+  /*
+   * Soft edges from nested wedges. A canvas gradient runs along one axis, so
+   * there is no way to feather a wedge sideways; four overlapping wedges, widest
+   * and faintest first, add up to a falloff that reads as light. Drawn as one,
+   * however subtle, it reads as a pane of glass -- which is exactly what the
+   * first version of this looked like.
+   */
+  const layers = [
+    { width: 3.2, alpha: 0.28 },
+    { width: 2.0, alpha: 0.40 },
+    { width: 1.2, alpha: 0.62 },
+    { width: 0.55, alpha: 1.0 }
+  ];
+  const slant = camera.width * 0.11;
+  for (let slot = first; slot <= last; slot += 1) {
+    const phase = slot * 0.79;
+    const sway = Math.sin(time * 0.11 + phase) * 0.13 + Math.sin(time * 0.037 + phase * 2.3) * 0.08;
+    const px = camera.screenX((slot + 0.5) * period + sway);
+    const width = camera.width * (0.014 + 0.020 * slotFraction(slot * 3.7));
+    const strength = 0.018 + 0.020 * (0.5 + 0.5 * Math.sin(time * 0.13 + phase * 1.7));
+    for (const layer of layers) {
+      const top = width * layer.width;
+      const bottom = top * 3.4;
+      context.beginPath();
+      context.moveTo(px - top * 0.5, surfaceTop);
+      context.lineTo(px + top * 0.5, surfaceTop);
+      context.lineTo(px + slant + bottom * 0.5, floor);
+      context.lineTo(px + slant - bottom * 0.5, floor);
+      context.closePath();
+      const alpha = strength * layer.alpha;
+      const gradient = context.createLinearGradient(0, surfaceTop, 0, floor);
+      gradient.addColorStop(0.0, hsl(186, 94, 80, alpha));
+      gradient.addColorStop(0.45, hsl(192, 88, 62, alpha * 0.40));
+      gradient.addColorStop(1.0, hsl(204, 80, 52, 0.0));
+      context.fillStyle = gradient;
+      context.fill();
+    }
+  }
+}
+
+/*
+ * The band of light just under the surface, and the bright patch where the sun
+ * happens to be. Both are what makes water read as water rather than as a
+ * gradient with a line on it.
+ */
+function drawSurfaceLight(context, camera, field, time) {
+  const surfaceTop = camera.screenY(0.0);
+  const band = Math.max(1.0, camera.height * 0.15);
+  const near = context.createLinearGradient(0, surfaceTop, 0, surfaceTop + band);
+  near.addColorStop(0.0, 'hsla(186,92%,82%,0.17)');
+  near.addColorStop(1.0, 'hsla(188,90%,70%,0)');
+  context.fillStyle = near;
+  context.fillRect(0, surfaceTop, camera.width, band);
+
+  const glintX = camera.x + 0.85 * Math.sin(time * 0.047);
+  const px = camera.screenX(glintX);
+  const py = camera.screenY(field.sample(glintX));
+  const reach = Math.max(1.0, camera.width * 0.26);
+  const glint = context.createRadialGradient(px, py, 0, px, py, reach);
+  glint.addColorStop(0.0, 'hsla(52,96%,88%,0.16)');
+  glint.addColorStop(0.45, 'hsla(190,96%,80%,0.06)');
+  glint.addColorStop(1.0, 'hsla(190,96%,80%,0)');
+  context.fillStyle = glint;
+  context.fillRect(px - reach, py - reach, reach * 2.0, reach * 2.0);
 }
 
 /*
@@ -413,10 +512,63 @@ function drawPlankton(context, camera, world) {
 }
 
 /*
+ * The bubble string a swimming body leaves behind.
+ *
+ * The renderer owns no state, so it cannot remember where the creature was. It
+ * does not need to: bubbles are shed on a fixed interval, so the age of the
+ * k-th oldest is `k * SHED + (time mod SHED)`, and where it was shed is
+ * approximately where the creature is now, walked back along its own velocity.
+ * That is a straight-ish line of rising, growing bubbles, and it is a pure
+ * function of one frame -- which is what keeps golden frames reproducible.
+ */
+function drawBubbles(context, camera, world) {
+  const creature = world.creature;
+  if (creature.immersion() < 0.5) {
+    return;
+  }
+  const drift = creature.velocity();
+  const speed = Math.hypot(drift.vx, drift.vy);
+  if (speed < 0.16) {
+    return;
+  }
+  const centre = creature.centroid();
+  const scale = pixelsPerUnit(camera);
+  const presence = Math.min(1.0, (speed - 0.16) / 0.5);
+  const ageOfFirst = world.time % SHED;
+  for (let slot = 0; slot < 9; slot += 1) {
+    const age = ageOfFirst + slot * SHED;
+    if (age >= BUBBLE_LIFE) {
+      continue;
+    }
+    const life = age / BUBBLE_LIFE;
+    // The string lags the body, and the bubbles are buoyant, so they climb out
+    // of the wake as they age.
+    const worldX = centre.x - drift.vx * age * 0.8 + Math.sin(age * 5.4 + slot) * 0.006;
+    const worldY = centre.y - drift.vy * age * 0.8 - 0.34 * age;
+    if (worldY < 0.01 || worldY > 0.99) {
+      continue;
+    }
+    const px = camera.screenX(worldX);
+    const py = camera.screenY(worldY);
+    const radius = Math.max(0.6, scale * (0.0032 + 0.0055 * life) * (0.6 + 0.8 * slotFraction(slot)));
+    const alpha = 0.42 * (1.0 - life) * presence;
+    context.beginPath();
+    context.arc(px, py, radius, 0, Math.PI * 2);
+    context.fillStyle = hsl(190, 96, 88, alpha * 0.45);
+    context.fill();
+    context.beginPath();
+    context.arc(px, py, radius, 0, Math.PI * 2);
+    context.strokeStyle = hsl(190, 100, 94, alpha);
+    context.lineWidth = 1;
+    context.stroke();
+  }
+}
+
+/*
  * Cursor field. Colour encodes mode: warm = push, cool = pull. Radius is the
  * real influence radius from the simulation, so what you see is what acts.
  */
-function drawCursor(context, camera, pointer) {
+function drawCursor(context, camera, pointer, time) {
   if (!pointer.active) {
     return;
   }
@@ -434,22 +586,48 @@ function drawCursor(context, camera, pointer) {
   context.fillStyle = gradient;
   context.fill();
 
+  // Pulsed off simulated time, not the wall clock: a frame of this renderer has
+  // to depend on the seed alone, and a ring that breathed on `Date.now()` made
+  // the same world paint two different pictures.
   context.beginPath();
-  context.arc(x, y, Math.max(1, radiusPx * (0.86 + 0.05 * Math.sin(Date.now() / 260))), 0, Math.PI * 2);
+  context.arc(x, y, Math.max(1, radiusPx * (0.86 + 0.05 * Math.sin(time * 3.8))), 0, Math.PI * 2);
   context.strokeStyle = hsl(hue, 100, 78, 0.35 + 0.4 * pointer.pressure);
   context.lineWidth = 1.2;
   context.stroke();
+}
+
+/*
+ * How dark it gets, and how fast: everything below this depth starts to close
+ * in, which is the cheapest way to make the sounding layer feel somewhere you
+ * should not linger. The cursor field is drawn after this so the one piece of
+ * interface in the water stays as readable as the water itself.
+ */
+function drawDepthVignette(context, camera) {
+  const from = camera.screenY(0.45);
+  const floor = camera.screenY(1.0);
+  if (!(floor > from)) {
+    return;
+  }
+  const gradient = context.createLinearGradient(0, from, 0, floor);
+  gradient.addColorStop(0.0, 'hsla(226,64%,4%,0)');
+  gradient.addColorStop(1.0, 'hsla(226,64%,3%,0.42)');
+  context.fillStyle = gradient;
+  context.fillRect(0, from, camera.width, floor - from);
 }
 
 function render(context, world, camera, time) {
   camera.x = world.cameraX;
   context.save();
   drawWater(context, camera, world, time);
+  drawSunlight(context, camera, time);
   drawSurface(context, camera, world.field);
+  drawSurfaceLight(context, camera, world.field, time);
   drawWake(context, camera, world.field);
   drawPlankton(context, camera, world);
   drawCreature(context, camera, world.creature, time);
-  drawCursor(context, camera, world.pointer);
+  drawBubbles(context, camera, world);
+  drawDepthVignette(context, camera);
+  drawCursor(context, camera, world.pointer, time);
   context.restore();
 }
 
