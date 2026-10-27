@@ -155,7 +155,16 @@ class PondAudio {
     this.lastNoteTime = now;
 
     const spec = this.drone.specimen;
-    const degree = event.waveIndex % spec.frequencies.length;
+    /*
+     * `waveIndex` is derived from the creature's world x, and the trench is
+     * endless, so it is negative about half the time. JS `%` keeps the sign of
+     * the dividend, so -7 selected `frequencies[-2]` -- undefined -- and NaN
+     * reached setValueAtTime, which a real browser throws on, killing the loop.
+     * Mapping an arbitrary index onto the chord is audio's business, so it is
+     * normalised here rather than at every call site.
+     */
+    const degrees = spec.frequencies.length;
+    const degree = ((event.waveIndex % degrees) + degrees) % degrees;
     const octaveShift = event.strength > 1.2 ? -1 : 0;
     const frequency = spec.frequencies[degree] * Math.pow(2.0, octaveShift);
 

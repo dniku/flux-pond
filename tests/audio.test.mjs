@@ -15,13 +15,23 @@ const { makeSpecimen, noteFrequency } = FluxPond;
 let passed = 0;
 const failures = [];
 
+/*
+ * The bodies here are async (enabling audio awaits a context resume), so the
+ * helper has to await them. It used to call `fn()` and count the test as passed
+ * synchronously, which meant every assertion after the first `await` was
+ * silently discarded -- including a real NaN bug that only the Chromium check
+ * surfaced. Test bodies that reject are now recorded, and the report at the
+ * bottom waits for all of them.
+ */
 function test(name, fn) {
-  try {
-    fn();
-    passed += 1;
-  } catch (error) {
-    failures.push({ name, message: error.message });
-  }
+  return (async () => {
+    try {
+      await fn();
+      passed += 1;
+    } catch (error) {
+      failures.push({ name, message: error.message, stack: error.stack });
+    }
+  })();
 }
 
 function assert(condition, message) {
@@ -94,6 +104,10 @@ function makeStubContext() {
 function makeParam() {
   return {
     value: 0,
+    // Every scheduled target, in order: tests assert on the values the module
+    // actually asked the param to move to (the cutoff range test is unreadable
+    // without this, and was silently dead until the helper began awaiting).
+    targets: [],
     setValueAtTime(v) { assertFinited('setValueAtTime', v); this.value = v; return this; },
     linearRampToValueAtTime(v, t) { assertFinited('linearRamp', v); assertFinited('linearRamp.t', t); return this; },
     exponentialRampToValueAtTime(v, t) {
@@ -108,6 +122,7 @@ function makeParam() {
       assertFinited('setTarget', v);
       assertFinited('setTarget.t', t);
       assertFinited('setTarget.c', c);
+      this.targets.push(v);
       return this;
     },
     cancelScheduledValues() { return this; }
@@ -126,7 +141,7 @@ function audioWithStub() {
   return { audio, stub };
 }
 
-test('the API is untouched until enable()', async () => {
+await test('the API is untouched until enable()', async () => {
   const { audio, stub } = audioWithStub();
   const specimen = withFrequencies(makeSpecimen(3), noteFrequency);
   // Without enable(), these must be no-ops rather than constructing nodes.
@@ -137,7 +152,7 @@ test('the API is untouched until enable()', async () => {
   assert(stub.nodes.oscillators.length === 0, 'audio nodes created before enable()');
 });
 
-test('enable() then startDrone() starts one oscillator per chord tone, all started', async () => {
+await test('enable() then startDrone() starts one oscillator per chord tone, all started', async () => {
   const { audio, stub } = audioWithStub();
   await audio.enable();
   const specimen = withFrequencies(makeSpecimen(3), noteFrequency);
@@ -154,7 +169,7 @@ test('enable() then startDrone() starts one oscillator per chord tone, all start
   stub.nodes.oscillators.forEach((node) => node.stop());
 });
 
-test('impact voices are rate-limited and bounded', async () => {
+await test('impact voices are rate-limited and bounded', async () => {
   const { audio, stub } = audioWithStub();
   await audio.enable();
   audio.startDrone(withFrequencies(makeSpecimen(5), noteFrequency));
@@ -168,7 +183,7 @@ test('impact voices are rate-limited and bounded', async () => {
   assert(impactVoices >= 1, 'no impact voice at all');
 });
 
-test('time advances so impacts are heard, and every voice gets stopped', async () => {
+await test('time advances so impacts are heard, and every voice gets stopped', async () => {
   const { audio, stub } = audioWithStub();
   await audio.enable();
   audio.startDrone(withFrequencies(makeSpecimen(5), noteFrequency));
@@ -178,20 +193,21 @@ test('time advances so impacts are heard, and every voice gets stopped', async (
     stub.context.currentTime += 0.05;
     if (audio.playImpact({ strength: 0.8, waveIndex: i })) {
       started += 1;
-    }
-  }
-  assert(started >= 30, `impacts were over-suppressed: ${started}/40`);
-  const impacts = stub.nodes.oscillators.slice(droneCount);
-  assert(impacts.every((node) => node.started), 'an impact oscillator never started');
-  // Simulate the scheduler retiring voices.
-  impacts.forEach((node) => {
-    if (typeof node.onended === 'function') {
+      // The scheduler retires a voice when it ends; without this the budget
+      // (eight live voices) caps the run at eight, which is not what is under
+      // test here. `the voice budget caps a burst` covers the limit itself.
+      const node = stub.nodes.oscillators[stub.nodes.oscillators.length - 1];
       node.onended();
     }
-  });
+  }
+  assert(started === 40, `impacts were over-suppressed: ${started}/40`);
+  const impacts = stub.nodes.oscillators.slice(droneCount);
+  assert(impacts.length === 40, `expected 40 impact voices, got ${impacts.length}`);
+  assert(impacts.every((node) => node.started), 'an impact oscillator never started');
+  assert(impacts.every((node) => node.stopped), 'an impact oscillator was never stopped');
 });
 
-test('exponential ramps never target exactly zero', async () => {
+await test('exponential ramps never target exactly zero', async () => {
   const { audio, stub } = audioWithStub();
   await audio.enable();
   audio.startDrone(withFrequencies(makeSpecimen(2), noteFrequency));
@@ -204,7 +220,7 @@ test('exponential ramps never target exactly zero', async () => {
   }
 });
 
-test('depth update keeps the filter cutoff in an audible range', async () => {
+await test('depth update keeps the filter cutoff in an audible range', async () => {
   const { audio, stub } = audioWithStub();
   await audio.enable();
   audio.startDrone(withFrequencies(makeSpecimen(4), noteFrequency));
@@ -224,7 +240,7 @@ test('depth update keeps the filter cutoff in an audible range', async () => {
   assert(high > low * 2, `cutoff range too narrow to convey depth: ${low}..${high}`);
 });
 
-test('chord frequencies are finite, positive and in a musical range', () => {
+await test('chord frequencies are finite, positive and in a musical range', () => {
   for (let seed = 0; seed < 200; seed += 1) {
     const specimen = withFrequencies(makeSpecimen(seed), noteFrequency);
     assert(specimen.frequencies.length > 0, `seed ${seed} produced no notes`);
@@ -240,6 +256,28 @@ function makeParamWithTargets() {
   return makeParam();
 }
 void makeParamWithTargets;
+
+await test('an impact survives the endless trench, where the wave index goes negative', async () => {
+  // The app derives waveIndex from `Math.round(ripple.x * 3)`, and world x is
+  // negative as soon as the creature swims left of its origin. JS `%` keeps the
+  // sign of the dividend, so -7 selected `frequencies[-2]` -- undefined -- and
+  // NaN reached setValueAtTime, which a real browser throws on. This was found
+  // by the Chromium page check, not by these tests, which only ever passed
+  // positive indices.
+  const { audio, stub } = audioWithStub();
+  await audio.enable();
+  audio.startDrone(withFrequencies(makeSpecimen(3), noteFrequency));
+  for (const waveIndex of [0, -1, -2, -5, -7, -1234, 1234]) {
+    stub.context.currentTime += 0.05;  // clear the rate limit between notes
+    assert(
+      audio.playImpact({ strength: 0.8, waveIndex }) === true,
+      `impact at waveIndex ${waveIndex} was not played`
+    );
+  }
+  const last = stub.nodes.oscillators[stub.nodes.oscillators.length - 1];
+  assert(Number.isFinite(last.frequency.value), `oscillator frequency not finite: ${last.frequency.value}`);
+  assert(last.frequency.value > 0, `oscillator frequency not audible: ${last.frequency.value}`);
+});
 
 process.stdout.write(JSON.stringify({ passed, failed: failures.length }) + '\n');
 for (const failure of failures) {
