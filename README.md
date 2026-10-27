@@ -21,7 +21,7 @@ No build step, no dependencies, no network access at runtime: no fonts, librarie
 | Input | Effect |
 | --- | --- |
 | Move the cursor | Pushes the creature away from the cursor within the visible ring |
-| Press / hold | Pushes harder (the field swells rather than snapping on) |
+| Press / hold | Pushes harder: 0.55 hovering, 1.0 pressed. The field swells and subsides through a ramp either way, and the ring is painted from the same number, so what you see is what it is getting |
 | **Shift**-drag or **right**-drag | **Pull** instead of push — this is how you make it dive |
 | `R` | New specimen (a new seed is written to the URL) |
 | `Space` | Pause / resume |
@@ -72,16 +72,35 @@ tools/check.sh --browser  # additionally drive the real page in headless Chromiu
 
 `tools/check.sh` needs Node, found on `PATH` or in the Nix store (`tools/toolchain.sh`). It runs `node --check` over every source file and then four test files:
 
-- `tests/sim.test.mjs` (34) — determinism, a 600-seed × 30 s stability sweep, hostile input, degenerate frame times, floating at the designed trim, floor impenetrability, area preservation, wake causality, surface-field advection and saturation, hysteresis of every phenomenon, audio helper maths. Plus: a new specimen starts **stress-free** (every spring's rest length equals the distance it was built at), the body still matches its built perimeter spacing after 12 s, the nose/tail are fixed material indices opposite each other, and the feeding layer — hunting deepens the creature compared with the same seed on an empty trench, hunger rises and a bite knocks it down, grazed motes stay gone until they regrow, the field is endless and identical across two runs of one seed, and the grazed-mote memory cannot grow without bound.
+- `tests/sim.test.mjs` (35) — determinism, including a reset replay that has to match a first boot of the same seed to 1e-9, a 600-seed × 30 s stability sweep, hostile input, degenerate frame times, floating at the designed trim, floor impenetrability, area preservation, wake causality, surface-field advection and saturation, hysteresis of every phenomenon, audio helper maths. Plus: a new specimen starts **stress-free** (every spring's rest length equals the distance it was built at), the body still matches its built perimeter spacing after 12 s, the nose/tail are fixed material indices opposite each other, and the feeding layer — hunting deepens the creature compared with the same seed on an empty trench, hunger rises and a bite knocks it down, grazed motes stay gone until they regrow, the field is endless and identical across two runs of one seed, and the grazed-mote memory cannot grow without bound.
 - `tests/render.test.mjs` (11) — renders through a recording 2D context across 120 seeds and degenerate viewport sizes, asserting no non-finite draw argument, no negative radius, balanced `save`/`restore`, and that the camera maps screen↔world space invertibly. Plus four on `creatureGeometry()`: finite at every viewport size, eye sized against the *projected* body, tail fin attached to real outline masses and pointing backwards, and the fin polygon free of self-intersections across 60 seeds.
-- `tests/audio.test.mjs` (7) — against a stub `AudioContext`: nothing is touched before a gesture, one oscillator per chord tone, voice budget respected under 500 impacts in an instant, filter cutoff stays audible across the depth range.
-- `tests/app.test.mjs` (10) — boots `index.html` verbatim in jsdom and checks the app/marker agreement in both directions (no id the app reads is missing, no id the page declares is dead), that frames populate the read-out, that pointer input moves the creature and generates wake, that shift selects pull, that pause freezes and resumes, that audio only starts on a gesture, and that every module `index.html` loads resolves on disk (jsdom does not fetch `src=` modules, so a renamed file is a blank page nothing else would catch).
+- `tests/audio.test.mjs` (8) — against a stub `AudioContext`, including an impact west of the origin where the wave index is negative: nothing is touched before a gesture, one oscillator per chord tone, voice budget respected under 500 impacts in an instant, filter cutoff stays audible across the depth range.
+- `tests/app.test.mjs` (11) — boots `index.html` verbatim in jsdom, checks that pressing swells the pointer field where hovering does not, and checks the app/marker agreement in both directions (no id the app reads is missing, no id the page declares is dead), that frames populate the read-out, that pointer input moves the creature and generates wake, that shift selects pull, that pause freezes and resumes, that audio only starts on a gesture, and that every module `index.html` loads resolves on disk (jsdom does not fetch `src=` modules, so a renamed file is a blank page nothing else would catch).
 
 These found every real bug listed under *Verified* below.
 
+### In a browser
+
+`tools/check.sh --browser` runs `tools/browser-check.mjs` through `tools/run-browser-check.sh`, which points Playwright at the Chromium in the Nix store and answers `https://fluxpond.test/**` from disk, so no socket is bound. Beyond the behavioural assertions it pins **three golden frames**, and logs the read-out of each so the image and the numbers can be checked against each other:
+
+| frame | the state | what it is there to catch |
+| --- | --- | --- |
+| `idle-5s` | settled at the waterline, gliding | the default look, and every panel where it belongs |
+| `hunt-40s` | 40 s later: hunger 72 %, working the plankton band | the feeding layer, the depth tint, the `photic` label |
+| `tow-10s` | held for 10 s by a pull toward the floor | a submerged body, two badges lit at once, the cursor ring |
+
+A frame is made deterministic by pausing the loop, resetting the world and advancing a fixed number of fixed steps, so an image depends on the seed and not on how long the machine took to paint, and the read-out is refreshed for the frame rather than left at whatever the last 500 ms window painted. Comparison tolerates 3 % of pixels moved and a mean channel delta of 1.5: a panel that moves or disappears is tens of thousands of pixels, a badge's 160 ms pop animation is half a per cent.
+
+```bash
+tools/recapture-golden.sh .tmp/review   # record frames somewhere for review
+tools/recapture-golden.sh               # ... and into tests/golden
+```
+
+That script runs Chromium **twice** on purpose: the first session records, the second compares against what the first left. Frames that agree across two sessions — different wall clocks, different frame rates, different `requestAnimationFrame` timing — are pinned to the seed rather than to the machine's mood. On this host the two frames without a badge came out identical to the pixel; the one with a badge moved 0.55 %.
+
 ## Verified
 
-Observed, on Node v24.20 with the current patch: **62 automated checks pass** (`tools/check.sh`) — 34 simulation, 11 render, 7 audio, 10 app — plus `node --check` on all 12 source/test/tool JS files.
+Observed, on Node v24.20 with the current patch: **65 automated checks pass** (`tools/check.sh`) — 35 simulation, 11 render, 8 audio, 11 app — plus `node --check` on all 12 source/test/tool JS files. **And 25 checks pass in headless Chromium** (`tools/check.sh --browser`), on the real page over `https://`, including the three golden frames.
 
 Bugs found by those tests and fixed, each with a reproducing seed or input:
 
@@ -100,6 +119,14 @@ Numbers do not catch everything: 8–11 were found by rasterising a frame to PNG
 10. **The tail fin was a self-intersecting polygon.** Its lobes were emitted on the wrong sides of the base chord, so the two outer edges crossed and the even-odd fill left two thin needles instead of a fan. The fin is now walked in outline order, and a test asserts simplicity across 60 seeds.
 11. **The head was derived from velocity.** An earlier `heading()` took the argmax of `(position − centroid) · velocity`, which is solver noise when the creature is at rest — so the eye and tail fin jumped between random masses from frame to frame. The nose is now a material index (the thickest mass, which is also the heaviest) fixed when the specimen is generated.
 
+12. **A negative wave index fed `NaN` to an `AudioParam` and stopped the page.** `playImpact` indexed `frequencies` with `event.waveIndex % len`, and that index is `Math.round(ripple.x * 3)` — negative half the time in a trench that runs west forever — so `frequencies[-2]` was `undefined`, `setValueAtTime(undefined)` produced `NaN`, and the browser threw. `main.js` deliberately stops the frame loop after a throw, so swimming left of the origin killed the toy. Fixed with a real modulo (`((i % n) + n) % n`).
+13. **The audio tests could not fail.** The helper called the async test bodies without awaiting them, so every assertion after an `await` was discarded: that is how bug 12 lived inside a file that claimed to cover it. Awaiting the eight bodies surfaced three failures that had never once been seen — including bug 12, and a cutoff test reading a property the stub never recorded. A check that cannot fail is worse than no check, because it is also evidence.
+14. **Two panels had no `position`, and only a browser could have noticed.** `#buttons` and `#phenomena` are deliberately not `.panel`s, so they inherited no positioning and fell into static layout at the top-left, underneath the read-out: hit-testing the New specimen button returned `#status`, so it could not be clicked, and the phenomenon badges were invisible. Eleven render assertions and ten app assertions were entirely content with this. Playwright found it by clicking.
+15. **`reset()` leaked the steering brain, so a new specimen inherited the last one's momentum.** It rebuilt the body, the field and the plankton, but not `idleSeconds`, `selfDrive`, `driveHeading`, `straightness` or `previousCentre` — nor `wanderPhases`, which are *derived from the seed*, so a rerolled creature swam with the previous specimen's wander. The `?seed=` promise of an exact replay was simply false. `World`'s constructor and `reset` now share one initialisation path, and a test compares a reset replay with a first boot to 1e-9.
+16. **Pressing did nothing.** Both the hint and the comment above the code say pressing pushes harder; the pressure ramp keyed only on the cursor being in the window, so a hover was already at full strength and `pointerdown` set nothing the force used. Hover is now 0.55 and press 1.0 — which also stops every tow starting at maximum differential stretch (strain ~2.0 against ~2.8 over 10 s) — and a test asserts press > hover > released.
+
+The browser check itself had five bugs and had never run to completion: it read `#name` where the element is `#species`, probed `d[4]` of an RGBA pixel, sampled `app.fps` a few frames after boot (it is a 500 ms average), asserted that a click enables audio after a canvas gesture already had, and measured *net* displacement after a deliberately closed-loop wiggle. Worth listing because a check nobody has ever run is a hypothesis, not a guarantee.
+
 Two design corrections found by measurement rather than by a failing test: the background current described above, and pointer strength (a squared falloff left ~1.5 acceleration at one body-radius against 12.9 buoyancy, so the floor was unreachable and most phenomena could not be triggered; measured top speed went from 0.59 to ~2.4).
 
 All six phenomena — `skimming`, `breach`, `skittering`, `gliding`, `sounding layer`, `floor bounce` — were observed to trigger across several seeds with a generic push/pull drive.
@@ -116,13 +143,19 @@ Two existing tests had to change, and both changes were the test encoding an old
 - *floats at its designed trim* now runs `new World({ seed, food: false })`. Hunger is precisely a reason to leave the waterline, so measuring Archimedes on a creature that has somewhere to be measures two things at once. The empty-trench case is what that invariant is about, and it still lands on `floatTrim`.
 - *idle creatures remain bounded across many seeds* asserted one instantaneous sample, `0 < immersion < 1`, which the working hunger dive failed on seed 2. It now samples the whole 45 s and asserts what was meant: finite, in the column, not dry for a quarter of the run, not settled on the floor, not permanently sunk.
 
-## Not verified
+## What the browser settled, and what it did not
 
-- **No browser has ever run it.** No browser could be launched: this environment has no display, no browser on `PATH`, no network to fetch one, and Chromium in the Nix store cannot start because it calls `setsockopt` (EPERM) and escalation is denied by policy. `tools/browser-check.mjs` is written and ready; run `tools/check.sh --browser` where Chromium can start, and it asserts the page boots, the canvas is not blank, pointer input moves the creature, shift dives it, reroll changes the seed, and no errors occur.
-- **Geometry has been looked at; paint has not.** `tools/preview.mjs` shares `creatureGeometry()` with the renderer, so creature proportions, size against the trench, waterline straddling, silhouette and wake *have* been seen (that is how bugs 8–11 were found). What that cannot show: the gradients, stroke antialiasing, colour balance and contrast, the `backdrop-filter` panels, and whether 60 fps holds on real hardware.
-- **Audio has never been audible.** It is verified against a stub `AudioContext` only, so node graph correctness is checked and actual sound is not.
-- **`render.js` draws are asserted, not rasterised** (jsdom has no canvas backend), so call correctness and argument sanity are checked and pixel output is not.
-- Untested expectations: that `swiftshader`/GPU rendering matches this geometry at large viewports, long-session numerical drift beyond 60 s, and mobile/touch behaviour (`touch-action` is set, but no touch device was available).
+Observed in headless Chromium (Playwright, `--use-gl=swiftshader`, 1024×640, `?seed=20261027`): the page loads over `https://` with no page or console errors for the whole session; the canvas is neither blank nor black (probed every 23×17 px, >10 distinct colours, mean luma above 4); the loop reports ~60 fps; cursor input moves the creature and raises wake events; the HUD follows; `Shift`-drag gets it below the surface; `R` rerolls the seed and rewrites the URL; a canvas gesture is what switches audio on, the audio button toggles state and label, and the graph builds (drone voices > 0) without an exception; the plankton layer is live; the three golden frames match. See bug 14 for what it caught that 21 jsdom assertions did not.
+
+Chromium needs escalated permission here: this container gives it no user namespace, so it runs `--no-sandbox`, and the browsers come out of the Nix store because nothing can be downloaded. The check answers requests through `page.route` from disk rather than binding a socket — which is also why **`serve.py` is still the one piece of the project nothing has ever run**: binding a port needs that same escalation, and doing it in the automated checks would mean needing it every time.
+
+Still needs a person rather than a harness:
+
+- **Whether it looks and feels good.** The goldens pin three instants. The motion, the colour balance, the `backdrop-filter` panels, and whether 60 fps survives real hardware (all of this was software-rasterised) are judgement calls, not assertions.
+- **Whether it makes a sound.** Audio has been *constructed* in a real browser — nodes built, voices started and stopped, no exceptions — and validated against a stub elsewhere. Headless Chromium has no audio device, so nobody has heard it.
+- **Touch.** `touch-action: none` is set, everything routes through pointer events, and `pressing` comes from `pointerdown`, which fires for touch. All of that is an inference; no touch device has driven it.
+- **Hours rather than seconds.** 60 s of simulation runs headless with nothing adrift; longer has not been observed.
+- **Pixels outside those three frames.** `render.js` is asserted through a recording 2D context — jsdom has no canvas backend — so the goldens are the only moments the real rasterisation has been looked at, at one viewport and one seed.
 
 ## Limitations
 
@@ -131,6 +164,9 @@ Two existing tests had to change, and both changes were the test encoding an old
 - `SurfaceField` is a 1024-cell global height field with a fixed advection speed, so waves do not genuinely disperse; they translate and decay.
 - The 22-mass loop is coarse: fast specimens visibly polygonalise, and the area constraint is radial-about-centroid, which is wrong for strongly concave shapes (it is stable, just not exact).
 - No saving beyond the seed: phenomena history and metrics reset on reload.
+- The influence field is anchored in world space, so holding the cursor still lets the ring slide off the creature as the camera follows it. Deliberate — a field that snapped along with the camera would be feedback nobody could read — but it means steering by where you leave the cursor, not by where you point at the animal.
+- A press is a strong local gradient with no yield limit: hold one against the creature and the loop stretches, because the pointer force acts on each mass separately and the body resists area, not length (strain ~2.8 over 10 s at full press, against ~2.0 hovering).
+- The counters — travel, ripples, fed, breaches — are session totals and survive `R` on purpose, so after a reroll they describe the séance rather than the specimen.
 - The physics is tuned for `0 <= y <= 1` and one creature; nothing here generalises to several bodies, and they would not interact.
 
 ## Next iteration
