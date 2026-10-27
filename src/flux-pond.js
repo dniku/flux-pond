@@ -113,6 +113,120 @@ const LAYERS = [
 ];
 
 /*
+ * Integer -> [0,1). Cheap and dependency-free; the field only needs to be
+ * stable and decorrelated enough not to look gridded.
+ */
+function hashUnit(a, b) {
+  let h = Math.imul(a | 0, 0x27d4eb2d) ^ Math.imul(b | 0, 0x165667b1);
+  h = Math.imul(h ^ (h >>> 15), 0x85ebca6b);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35);
+  h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
+}
+
+function foodBand(seed) {
+  const rng = makeRng((seed ^ 0x9e3779b1) >>> 0);
+  const top = FOOD.bandTop + rng() * FOOD.bandTopSpan;
+  return { top, bottom: Math.min(WORLD.depth - 0.05, top + FOOD.bandThickness) };
+}
+
+/*
+ * Visit the live motes whose cell overlaps [minX, maxX]. A mote that has been
+ * grazed is skipped until it regrows, and the expiry is pruned here rather than
+ * on a timer, because this is the only place its id is in hand.
+ */
+function forEachMote(world, minX, maxX, visit) {
+  const first = Math.floor(minX / FOOD.cellWidth);
+  const last = Math.floor(maxX / FOOD.cellWidth);
+  const seed = world.seed;
+  for (let cell = first; cell <= last; cell += 1) {
+    for (let sub = 0; sub < FOOD.maxMotesPerCell; sub += 1) {
+      const salt = (sub + 1) * 0x3f7311;
+      if (hashUnit(cell, seed ^ salt) >= FOOD.presence) {
+        continue;
+      }
+      const id = cell * FOOD.maxMotesPerCell + sub;
+      const regrows = world.foodEaten.get(id);
+      if (regrows !== undefined) {
+        if (world.time >= regrows) {
+          world.foodEaten.delete(id);
+        } else {
+          continue;
+        }
+      }
+      const x = (cell + hashUnit(cell, seed ^ (salt + 17))) * FOOD.cellWidth;
+      const y =
+        lerp(world.foodBand.top, world.foodBand.bottom, hashUnit(cell, seed ^ (salt + 29))) +
+        FOOD.bobAmplitude * Math.sin(2.0 * Math.PI * (world.time * FOOD.bobHz + hashUnit(cell, seed ^ (salt + 41))));
+      visit(id, x, y, 0.55 + 0.45 * hashUnit(cell, seed ^ (salt + 53)));
+    }
+  }
+}
+
+function nearestMote(world, x, y, radius) {
+  let best = null;
+  let bestDistanceSq = radius * radius;
+  forEachMote(world, x - radius, x + radius, (id, moteX, moteY, size) => {
+    const dx = moteX - x;
+    const dy = moteY - y;
+    const distanceSq = dx * dx + dy * dy;
+    if (distanceSq < bestDistanceSq) {
+      bestDistanceSq = distanceSq;
+      best = { id, x: moteX, y: moteY, size };
+    }
+  });
+  return best;
+}
+
+/* Shortest-arc blend: headings wrap, and a linear one would spin the long way. */
+function lerpAngle(a, b, t) {
+  let delta = (b - a) % (Math.PI * 2.0);
+  if (delta > Math.PI) {
+    delta -= Math.PI * 2.0;
+  } else if (delta < -Math.PI) {
+    delta += Math.PI * 2.0;
+  }
+  return a + delta * t;
+}
+
+/*
+ * One graze pass: every mass is a possible mouth. Cheap vertical reject first,
+ * because the band is a fraction of the column and the body usually misses it.
+ */
+function graze(world) {
+  const creature = world.creature;
+  const biteSq = FOOD.biteRadius * FOOD.biteRadius;
+  const top = world.foodBand.top - FOOD.biteRadius;
+  const bottom = world.foodBand.bottom + FOOD.biteRadius;
+  for (let i = 0; i < creature.points; i += 1) {
+    const y = creature.y[i];
+    if (y < top || y > bottom) {
+      continue;
+    }
+    const x = creature.x[i];
+    forEachMote(world, x - FOOD.biteRadius, x + FOOD.biteRadius, (id, moteX, moteY) => {
+      const dx = moteX - x;
+      const dy = moteY - y;
+      if (dx * dx + dy * dy > biteSq) {
+        return;
+      }
+      world.foodEaten.set(id, world.time + FOOD.regrowSeconds);
+      if (world.foodEaten.size > FOOD.maxEaten) {
+        world.foodEaten.delete(world.foodEaten.keys().next().value);
+      }
+      world.hunger = clamp(world.hunger - FOOD.biteRelief, 0.0, 1.0);
+      world.metrics.fedCount += 1;
+      world.feedPops.push({ x: moteX, y: moteY, age: 0.0 });
+      if (world.feedPops.length > 12) {
+        world.feedPops.shift();
+      }
+      world.emit({ kind: 'feed', x: moteX, y: moteY, strength: 1.0 });
+    });
+  }
+}
+
+/*
  * Detection thresholds, in units the sim actually produces.
  *
  * `depth` fields are *wetted fractions* of the body (0 = dry, 1 = submerged),
@@ -131,6 +245,52 @@ const PHENOMENA = {
   glide: { speed: 0.55, straightness: 0.9, depth: 0.7 },
   dive: { depth: 0.72 },
   bounce: { impulse: 0.15 }
+};
+
+/*
+ * Plankton: the reason an untouched creature has somewhere to be.
+ *
+ * The trench is endless, so the layer is generated rather than stored. Each
+ * cell of world x hashes to up to `maxMotesPerCell` motes inside a seed-
+ * dependent band; only two things are remembered -- which mote ids have been
+ * grazed (with a regrow time) and the creature's hunger -- so walking forever
+ * cannot grow the state, and any position is reproducible from the seed alone.
+ *
+ * Hunger is not a new force. It re-aims the body-wide steering acceleration the
+ * idle creature already uses, which keeps one force law and means a hungry
+ * creature interacts with its own wake exactly the way a steered one does.
+ */
+const FOOD = {
+  cellWidth: 0.5,
+  maxMotesPerCell: 3,
+  presence: 0.55,
+  bandTop: 0.24,
+  bandTopSpan: 0.38,
+  bandThickness: 0.2,
+  bobAmplitude: 0.014,
+  bobHz: 0.06,
+  moteRadius: 0.0075,
+  biteRadius: 0.075,
+  searchRadius: 2.0,
+  hungerRate: 0.035,
+  biteRelief: 0.34,
+  startHunger: 0.62,
+  biasThreshold: 0.42,
+  steerGain: 0.85,
+  /*
+   * A hunting dive has to beat the body's own excess buoyancy, and there is no
+   * way to fake that: a fully submerged body is accelerated upward at
+   * `gravity / floatTrim - gravity` = 8.5, so the old 3.0 ceiling on the depth
+   * steering could never have held one down, and a hungry creature simply
+   * bobbed and starved. `diveThrust` cancels that excess -- what fins do -- and
+   * the proportional term then steers on top of it. `huntDepthGain` is the gain
+   * for a committed dive; the surface gain stays where it was.
+   */
+  diveThrust: 1.0,
+  huntDepthGain: 8.0,
+  authority: 16.0,
+  regrowSeconds: 50,
+  maxEaten: 600
 };
 
 const SPECIES = [
@@ -906,9 +1066,49 @@ function updateSelfDrive(world, dt) {
    * Vertical steering is a single body-wide acceleration based on the centroid,
    * never a per-mass pull toward the surface: pulling each mass independently
    * would flatten the body into a pancake.
+   *
+   * Hunger moves the target, nothing else. A hungry creature steers toward the
+   * nearest mote -- in heading, and by aiming the same depth controller at the
+   * mote instead of at the surface -- so the drive that already exists acquires
+   * a purpose rather than gaining a second force law. `foodBlend` ramps the
+   * switch so the creature eases onto a course instead of snapping to it, and
+   * it holds the last target between searches so the aim does not jitter.
    */
-  const centroidY = world.creature.centroid().y;
-  world.driveVertical = clamp(-centroidY * WORLD.selfDepthGain, -3.0, 3.0);
+  const centre = world.creature.centroid();
+  let targetY = 0.0;
+  let wanted = 0.0;
+  if (world.foodEnabled && world.hunger > FOOD.biasThreshold) {
+    const mote = nearestMote(world, centre.x, centre.y, FOOD.searchRadius);
+    if (mote !== null) {
+      world.foodTarget = mote;
+    }
+  } else {
+    world.foodTarget = null;
+  }
+  if (world.foodTarget !== null) {
+    wanted = FOOD.steerGain *
+      smoothstep(FOOD.biasThreshold, 1.0, world.hunger) *
+      (1.0 - smoothstep(FOOD.searchRadius * 0.45, FOOD.searchRadius, Math.hypot(
+        world.foodTarget.x - centre.x, world.foodTarget.y - centre.y
+      )));
+  }
+  world.foodBlend = lerp(world.foodBlend, wanted, clamp(1.5 * dt, 0.0, 1.0));
+  if (world.foodBlend > 0.01 && world.foodTarget !== null) {
+    const desired = Math.atan2(world.foodTarget.y - centre.y, world.foodTarget.x - centre.x);
+    world.driveHeading = lerpAngle(world.driveHeading, desired, world.foodBlend);
+    targetY = world.foodTarget.y * world.foodBlend;
+  }
+  const hunt = world.foodBlend;
+  const depthGain = lerp(WORLD.selfDepthGain, FOOD.huntDepthGain, hunt);
+  // Cancels the upward excess buoyancy of a submerged body, so a committed dive
+  // can actually commit. Zero whenever the creature is not hunting, which is
+  // what keeps the surface trim untouched by any of this.
+  const excessBuoyancy = WORLD.gravity / WORLD.floatTrim - WORLD.gravity;
+  world.driveVertical = clamp(
+    (targetY - centre.y) * depthGain + hunt * FOOD.diveThrust * excessBuoyancy,
+    -FOOD.authority,
+    FOOD.authority
+  );
 }
 
 function stepCreature(world, dt) {
@@ -978,6 +1178,19 @@ function stepCreature(world, dt) {
 class World {
   constructor(options) {
     this.seed = options.seed >>> 0;
+    /*
+     * The plankton layer is what gives the creature a reason to leave its trim.
+     * It is on by default and off only where that is the point: the Archimedes
+     * invariant below, that a floating body settles at `floatTrim`, cannot be
+     * measured on a creature that has somewhere it would rather be.
+     */
+    this.foodEnabled = options.food !== false;
+    this.foodBand = foodBand(this.seed);
+    this.hunger = FOOD.startHunger;
+    this.foodEaten = new Map();
+    this.foodTarget = null;
+    this.foodBlend = 0.0;
+    this.feedPops = [];
     this.field = new SurfaceField(WORLD);
     this.strata = buildStrata();
     this.creature = buildCreature(this.seed, this.field);
@@ -1009,6 +1222,8 @@ class World {
       glideTime: 0.0,
       breachCount: 0,
       bounceCount: 0,
+      fedCount: 0,
+      diveHunts: 0,
       solverStrain: 0.0
     };
     this.phenomena = {
@@ -1033,6 +1248,18 @@ class World {
     this.previousCentre = this.creature.centroid();
     this.audibleRipples = [];
     this.rippleBudgetTime = 0.0;
+  }
+
+  /*
+   * The public way for a painter to ask what is in a slice of the trench. The
+   * renderer imports no physics, only this: it never has to know that a mote's
+   * position comes from a hash of its cell.
+   */
+  forEachMote(minX, maxX, visit) {
+    if (!this.foodEnabled) {
+      return;
+    }
+    forEachMote(this, minX, maxX, visit);
   }
 
   setPointer(state) {
@@ -1073,6 +1300,16 @@ class World {
       this.time += substep;
       this.metrics.steps += 1;
       this.observe(substep);
+    }
+    if (this.foodEnabled) {
+      this.hunger = clamp(this.hunger + FOOD.hungerRate * dtSeconds, 0.0, 1.0);
+      graze(this);
+      for (let i = this.feedPops.length - 1; i >= 0; i -= 1) {
+        this.feedPops[i].age += dtSeconds;
+        if (this.feedPops[i].age > 0.7) {
+          this.feedPops.splice(i, 1);
+        }
+      }
     }
     this.consumeWetting();
     this.field.advance(Math.max(0.0, dtSeconds - substeps * substep));
@@ -1286,6 +1523,12 @@ class World {
     this.pendingWetting = [];
     this.audibleRipples = [];
     this.events = [];
+    this.foodBand = foodBand(this.seed);
+    this.foodEaten = new Map();
+    this.foodTarget = null;
+    this.foodBlend = 0.0;
+    this.feedPops = [];
+    this.hunger = FOOD.startHunger;
     for (const key of Object.keys(this.phenomena)) {
       this.phenomena[key] = false;
     }
@@ -1343,6 +1586,7 @@ function sampleWavetable(table, phase) {
 
 const FluxPond = {
   WORLD,
+  FOOD,
   LAYERS,
   PHENOMENA,
   SPECIES,
@@ -1352,6 +1596,9 @@ const FluxPond = {
   makeRng,
   makeSpecimen,
   buildCreature,
+  foodBand,
+  forEachMote,
+  nearestMote,
   layerAt,
   buildStrata,
   clamp,
@@ -1370,6 +1617,7 @@ const FluxPond = {
  */
 export {
   WORLD,
+  FOOD,
   LAYERS,
   PHENOMENA,
   SPECIES,
@@ -1379,6 +1627,9 @@ export {
   makeRng,
   makeSpecimen,
   buildCreature,
+  foodBand,
+  forEachMote,
+  nearestMote,
   layerAt,
   clamp,
   lerp,

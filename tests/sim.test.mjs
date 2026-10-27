@@ -8,7 +8,7 @@
 import FluxPond from '../src/flux-pond.js';
 
 const {
-  WORLD, World, SurfaceField, makeSpecimen, clamp, smoothstep,
+  WORLD, FOOD, World, SurfaceField, makeSpecimen, clamp, smoothstep,
   noteFrequency, buildWavetable, sampleWavetable, layerAt
 } = FluxPond;
 
@@ -124,7 +124,12 @@ test('creature floats at its designed trim depth', () => {
   // A floating body bobs, so the invariant is the time-average, not an
   // instantaneous sample: measured over 110 s per seed the mean wetted fraction
   // lands on floatTrim to within a percent.
-  const world = new World({ seed: 42 });
+  //
+  // `food: false` because this measures buoyancy alone. Hunger is a reason for
+  // the creature to leave the surface, so running this with the plankton layer
+  // present would be measuring two things at once -- and it is exactly the
+  // behaviour the feeding tests below assert.
+  const world = new World({ seed: 42, food: false });
   let sum = 0.0;
   let samples = 0;
   for (let i = 0; i < 60 * 120; i += 1) {
@@ -340,20 +345,179 @@ test('self-propulsion yields to the player and resumes when left alone', () => {
 });
 
 test('idle creatures remain bounded across many seeds', () => {
+  // Bounded, not surface-locked. A hungry creature dives, so it is fully
+  // submerged for stretches, which an instantaneous `immersion < 1` sample used
+  // to forbid (it failed on seed 2 the moment the hunger drive worked). What
+  // must hold is that it stays in the water column, is not stranded dry, does
+  // not settle on the floor, and is not permanently sunk.
   for (let seed = 0; seed < 150; seed += 1) {
     const world = new World({ seed });
-    run(world, 45.0);
-    const immersion = world.creature.immersion();
+    let dry = 0;
+    let onFloor = 0;
+    let immersionSum = 0.0;
+    let samples = 0;
+    for (let i = 0; i < Math.round(45.0 * 60); i += 1) {
+      world.step(1 / 60);
+      world.followCamera(1 / 60);
+      if (world.creature.immersion() <= 0.0) {
+        dry += 1;
+      }
+      if (world.creature.lowestDepth() > WORLD.depth - 0.03) {
+        onFloor += 1;
+      }
+      immersionSum += world.creature.immersion();
+      samples += 1;
+    }
     assert(allFinite(world), `seed ${seed}: non-finite`);
+    assert(dry / samples < 0.25, `seed ${seed}: dry for ${Math.round(100 * dry / samples)}% of the run`);
     assert(
-      immersion > 0.0 && immersion < 1.0,
-      `seed ${seed}: left the water or sank (immersion ${immersion})`
+      onFloor / samples < 0.25,
+      `seed ${seed}: on the floor for ${Math.round(100 * onFloor / samples)}% of the run`
     );
-    assert(
-      Math.abs(world.creature.centroid().y) < 0.8,
-      `seed ${seed}: wandered off the column (${world.creature.centroid().y})`
-    );
+    const meanImmersion = immersionSum / samples;
+    assert(meanImmersion < 0.98, `seed ${seed}: permanently sunk (${meanImmersion})`);
+    assert(Math.abs(world.creature.centroid().y) < 0.8, `seed ${seed}: left the column`);
   }
+});
+
+// --- feeding ---------------------------------------------------------------
+function forage(seed, seconds) {
+  // Idle run, sampled: what the creature did, and how wet it was while doing it.
+  const world = new World({ seed, food: true });
+  let immersionSum = 0.0;
+  let samples = 0;
+  let minHunger = 1.0;
+  let feedEvents = 0;
+  world.step(1 / 60);
+  for (const event of world.events) {
+    if (event.kind === 'feed') {
+      feedEvents += 1;
+    }
+  }
+  for (let i = 0; i < Math.round(seconds * 60); i += 1) {
+    world.step(1 / 60);
+    world.followCamera(1 / 60);
+    immersionSum += world.creature.immersion();
+    minHunger = Math.min(minHunger, world.hunger);
+    samples += 1;
+  }
+  return { world, meanImmersion: immersionSum / samples, minHunger, feedEvents };
+}
+
+test('an idle creature hunts: hunger breaks the trim and ends in meals', () => {
+  // The whole point of the layer: with no player, the creature does not merely
+  // bob. Compared against the same seed on an empty trench, it sits wetter, and
+  // it eats.
+  const hungry = forage(7, 60);
+  const fasting = new World({ seed: 7, food: false });
+  let floatingSum = 0.0;
+  for (let i = 0; i < Math.round(60.0 * 60); i += 1) {
+    fasting.step(1 / 60);
+    fasting.followCamera(1 / 60);
+    floatingSum += fasting.creature.immersion();
+  }
+  const floating = floatingSum / (60.0 * 60);
+  assert(hungry.world.metrics.fedCount > 0, 'idle creature never fed in 60 s');
+  assert(
+    hungry.meanImmersion > floating + 0.05,
+    `hunting did not deepen the creature: ${hungry.meanImmersion} vs floating ${floating}`
+  );
+  assert(hungry.minHunger < FOOD.startHunger, 'hunger never fell, so nothing was eaten');
+});
+
+test('hunger rises with time and a bite knocks it back down', () => {
+  const world = new World({ seed: 11 });
+  const start = world.hunger;
+  run(world, 10.0);
+  assert(world.hunger > start, 'hunger did not rise while it foraged');
+
+  // Compare every sample with the highest value before it: hunger climbs
+  // steadily, so the only thing that can knock it down is a bite, and one bite
+  // is a fall of about `biteRelief` against a rising baseline.
+  let peak = world.hunger;
+  let largestFall = 0.0;
+  for (let i = 0; i < 60 * 60; i += 1) {
+    world.step(1 / 60);
+    world.followCamera(1 / 60);
+    largestFall = Math.max(largestFall, peak - world.hunger);
+    peak = Math.max(peak, world.hunger);
+  }
+  assert(world.metrics.fedCount > 0, 'never found a mote in 60 s of hunting');
+  assert(
+    largestFall > FOOD.biteRelief * 0.5,
+    `a bite did not relieve hunger: largest fall ${largestFall}`
+  );
+});
+
+test('a grazed mote is gone until it regrows', () => {
+  const world = new World({ seed: 5 });
+  let found = null;
+  world.forEachMote(0.0, 5.0, (id, x, y) => {
+    if (found === null) {
+      found = { id, x, y };
+    }
+  });
+  assert(found !== null, 'no motes in the first five metres of trench');
+  const seenBefore = [];
+  world.forEachMote(0.0, 5.0, (id) => seenBefore.push(id));
+  assert(seenBefore.includes(found.id), 'mote not present before grazing');
+
+  world.foodEaten.set(found.id, world.time + FOOD.regrowSeconds);
+  const seenWhileGrazed = [];
+  world.forEachMote(0.0, 5.0, (id) => seenWhileGrazed.push(id));
+  assert(!seenWhileGrazed.includes(found.id), 'grazed mote still present');
+
+  world.time += FOOD.regrowSeconds + 0.001;
+  const seenAfter = [];
+  world.forEachMote(0.0, 5.0, (id) => seenAfter.push(id));
+  assert(seenAfter.includes(found.id), 'mote did not regrow');
+});
+
+test('the plankton field is endless and reproducible', () => {
+  // The trench is infinite, so the field is hashed from cell indices rather than
+  // stored: it has to still exist 400 m along, and two runs must agree exactly.
+  const a = new World({ seed: 1234 });
+  const b = new World({ seed: 1234 });
+  const far = (world) => {
+    const list = [];
+    world.forEachMote(400.0, 405.0, (id, x, y, size) => list.push([id, x, y, size]));
+    return list;
+  };
+  const listA = far(a);
+  const listB = far(b);
+  assert(listA.length > 0, 'no plankton 400 m from the origin');
+  assert(JSON.stringify(listA) === JSON.stringify(listB), 'plankton field is not deterministic');
+  for (const [, x, y] of listA) {
+    assert(x >= 400.0 - FOOD.cellWidth && x <= 405.0 + FOOD.cellWidth, 'mote outside the requested span');
+    assert(y > 0.0 && y < WORLD.depth, `mote outside the column: ${y}`);
+  }
+  const other = new World({ seed: 1235 });
+  assert(JSON.stringify(far(other)) !== JSON.stringify(listA), 'every seed grows the same garden');
+});
+
+test('feeding events are well formed and the state stays bounded', () => {
+  const hunt = forage(20261027, 90);
+  const world = hunt.world;
+  assert(world.metrics.fedCount > 0, 'no meals in 90 s');
+  let feedEvents = 0;
+  for (const event of world.events) {
+    if (event.kind !== 'feed') {
+      continue;
+    }
+    feedEvents += 1;
+    assert(Number.isFinite(event.x) && Number.isFinite(event.y), 'feed event at a non-finite place');
+  }
+  assert(feedEvents > 0, 'the event log lost the feeding events');
+  assert(world.foodEaten.size <= FOOD.maxEaten, 'grazed-mote memory is unbounded');
+  assert(world.feedPops.length <= 12, 'bite rings are unbounded');
+});
+
+test('an empty trench changes nothing else about the creature', () => {
+  const world = new World({ seed: 21, food: false });
+  run(world, 30.0);
+  assert(world.metrics.fedCount === 0, 'creature fed in an empty trench');
+  assert(world.hunger === FOOD.startHunger, 'hunger moved with the layer switched off');
+  assert(world.foodTarget === null, 'the creature hunted a layer that is not there');
 });
 
 // --- helpers --------------------------------------------------------------
