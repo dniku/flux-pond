@@ -1177,7 +1177,6 @@ function stepCreature(world, dt) {
  */
 class World {
   constructor(options) {
-    this.seed = options.seed >>> 0;
     /*
      * The plankton layer is what gives the creature a reason to leave its trim.
      * It is on by default and off only where that is the point: the Archimedes
@@ -1185,20 +1184,13 @@ class World {
      * measured on a creature that has somewhere it would rather be.
      */
     this.foodEnabled = options.food !== false;
-    this.foodBand = foodBand(this.seed);
-    this.hunger = FOOD.startHunger;
-    this.foodEaten = new Map();
-    this.foodTarget = null;
-    this.foodBlend = 0.0;
-    this.feedPops = [];
-    this.field = new SurfaceField(WORLD);
+    /*
+     * Three things belong to the trench or to the session rather than to a
+     * specimen, so the constructor owns them and `reset` deliberately leaves
+     * them alone: the strata are a fixed backdrop, the pointer is input state,
+     * and `metrics` are session totals that outlive any one animal.
+     */
     this.strata = buildStrata();
-    this.creature = buildCreature(this.seed, this.field);
-    this.creature.restArea = Math.max(this.creature.area(), WORLD.minVolume);
-    this.scratchX = new Float64Array(this.creature.points);
-    this.scratchY = new Float64Array(this.creature.points);
-    this.cameraX = this.creature.centroid().x;
-    this.time = 0.0;
     this.pointer = {
       x: 0.0,
       y: 0.5,
@@ -1234,20 +1226,9 @@ class World {
       dive: false,
       bounce: false
     };
-    this.events = [];
-    this.pendingWetting = [];
-    this.originX = this.creature.centroid().x;
-    this.dwellStates = {};
-    const wander = makeRng((this.seed ^ 0x5bf03635) >>> 0);
-    this.wanderPhases = [wander() * Math.PI * 2, wander() * Math.PI * 2, wander() * Math.PI * 2];
-    this.idleSeconds = 0.0;
-    this.selfDrive = 0.0;
-    this.driveHeading = 0.0;
-    this.lastHeadingAngle = 0.0;
-    this.straightness = 1.0;
-    this.previousCentre = this.creature.centroid();
-    this.audibleRipples = [];
-    this.rippleBudgetTime = 0.0;
+    /* Everything else is a specimen's own state, established by `reset` -- the
+     * one place it is written, so a reroll cannot drift from a first boot. */
+    this.reset(options.seed >>> 0);
   }
 
   /*
@@ -1509,10 +1490,26 @@ class World {
     return { ok: problems.length === 0, problems, area, centroid };
   }
 
+  /*
+   * Establish a specimen from its seed. The constructor and a reroll share this
+   * path because `?seed=` is the share format: replaying a seed has to
+   * reproduce the animal exactly, and what decides how it moves is not only the
+   * body. The wander phases come from the seed, and `idleSeconds`, `selfDrive`
+   * and `straightness` decide whether it starts coasting or thrashing, so they
+   * belong to the specimen and not to the session; leaking one hands the next
+   * creature the previous animal's momentum and personality.
+   * `tests/sim.test.mjs` compares a reset replay with a first boot so that
+   * cannot come back.
+   *
+   * Time restarts too -- the plankton bob, the standing waves and the wander are
+   * all functions of it -- which is also what lets the browser check pin one
+   * frame and hold it against a golden image.
+   */
   reset(seed) {
     if (seed !== undefined) {
       this.seed = seed >>> 0;
     }
+    this.time = 0.0;
     this.field = new SurfaceField(WORLD);
     this.creature = buildCreature(this.seed, this.field);
     this.creature.restArea = Math.max(this.creature.area(), WORLD.minVolume);
@@ -1522,6 +1519,7 @@ class World {
     this.cameraX = this.originX;
     this.pendingWetting = [];
     this.audibleRipples = [];
+    this.rippleBudgetTime = 0.0;
     this.events = [];
     this.foodBand = foodBand(this.seed);
     this.foodEaten = new Map();
@@ -1529,6 +1527,15 @@ class World {
     this.foodBlend = 0.0;
     this.feedPops = [];
     this.hunger = FOOD.startHunger;
+    const wander = makeRng((this.seed ^ 0x5bf03635) >>> 0);
+    this.wanderPhases = [wander() * Math.PI * 2, wander() * Math.PI * 2, wander() * Math.PI * 2];
+    this.idleSeconds = 0.0;
+    this.selfDrive = 0.0;
+    this.driveHeading = 0.0;
+    this.driveVertical = 0.0;
+    this.lastHeadingAngle = 0.0;
+    this.straightness = 1.0;
+    this.previousCentre = this.creature.centroid();
     for (const key of Object.keys(this.phenomena)) {
       this.phenomena[key] = false;
     }

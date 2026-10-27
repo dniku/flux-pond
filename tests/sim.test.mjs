@@ -589,6 +589,30 @@ test('reset restores a finite creature and clears phenomena', () => {
   assert(allFinite(world), 'post-reset simulation is not finite');
 });
 
+/*
+ * `?seed=` is the share format, so a specimen has to replay exactly -- and a
+ * reroll is a reset, not a rebuild. Time is part of the state a replay depends
+ * on: the wander, the plankton bob and the surface's standing waves are all
+ * functions of it, so a reset that left the clock running would replay a
+ * different phase. This is what pins the browser check's golden frames.
+ */
+test('reset returns a specimen to the same phase, so a seed replays exactly', () => {
+  const replayed = new World({ seed: 77 });
+  run(replayed, 30.0);
+  replayed.reset(77);
+  run(replayed, 5.0);
+
+  const reference = new World({ seed: 77 });
+  run(reference, 5.0);
+
+  assert(replayed.time === reference.time, `clocks differ: ${replayed.time} vs ${reference.time}`);
+  const here = replayed.creature.centroid();
+  const there = reference.creature.centroid();
+  assertClose(here.x, there.x, 1e-9, 'x after reset+replay drifted from a fresh run');
+  assertClose(here.y, there.y, 1e-9, 'y after reset+replay drifted from a fresh run');
+  assertClose(replayed.cameraX, reference.cameraX, 1e-9, 'camera after reset+replay drifted');
+});
+
 test('health reports the state of a pathological creature', () => {
   const world = new World({ seed: 13 });
   run(world, 3.0);
