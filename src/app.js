@@ -324,6 +324,8 @@ class PondApp {
     this.setText('depth', centre.y.toFixed(2));
     this.setText('wet', `${Math.round(immersion * 100)}%`);
     this.setText('strain', strain.toFixed(2));
+    this.setText('hunger', `${Math.round(this.world.hunger * 100)}%`);
+    this.setText('fed', metrics.fedCount);
     this.setText('distance', metrics.distance.toFixed(1));
     this.setText('ripples', metrics.wakeEvents);
     this.setText('breaches', metrics.breachCount);
@@ -333,6 +335,7 @@ class PondApp {
     this.setMeter('depth', centre.y);
     this.setMeter('wet', immersion);
     this.setMeter('strain', strain);
+    this.setMeter('hunger', this.world.hunger);
     this.setMeter('distance', metrics.distance / 60.0);
 
     const layer = layerAt(Math.max(0, Math.min(1, centre.y)));

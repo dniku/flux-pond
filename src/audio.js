@@ -194,7 +194,7 @@ class PondAudio {
     const base = this.drone.specimen.frequencies[0] * 4.0;
     const oscillator = context.createOscillator();
     oscillator.type = 'triangle';
-    const ratio = kind === 'breach' ? 1.5 : kind === 'dive' ? 0.6 : 1.0;
+    const ratio = kind === 'breach' ? 1.5 : kind === 'dive' ? 0.6 : kind === 'feed' ? 2.0 : 1.0;
     oscillator.frequency.setValueAtTime(base * ratio, now);
     oscillator.frequency.exponentialRampToValueAtTime(base * ratio * 1.34, now + 0.18);
     const gain = context.createGain();

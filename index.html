@@ -44,6 +44,7 @@
   .fill { height: 100%; width: 0%; background: var(--accent); transition: width 90ms linear; }
   #depth-fill { background: #58a6ff; }
   #strain-fill { background: #ff8f6b; }
+  #hunger-fill { background: #8ce28a; }
 
   #phenomena { top: 14px; right: 14px; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; padding: 0; background: none; border: 0; backdrop-filter: none; }
   .badge {
@@ -87,9 +88,11 @@
   <div class="meter"><span>depth</span><div class="track"><div class="fill" id="depth-fill"></div></div><b id="depth">0.00</b></div>
   <div class="meter"><span>wetted</span><div class="track"><div class="fill" id="wet-fill"></div></div><b id="wet">0%</b></div>
   <div class="meter"><span>strain</span><div class="track"><div class="fill" id="strain-fill"></div></div><b id="strain">0.00</b></div>
+  <div class="meter"><span>hunger</span><div class="track"><div class="fill" id="hunger-fill"></div></div><b id="hunger">0%</b></div>
 
   <div class="meter"><span>travel</span><div class="track"><div class="fill" id="distance-fill"></div></div><b id="distance">0.0</b></div>
   <div class="meter"><span>ripples</span><div class="track"></div><b id="ripples">0</b></div>
+  <div class="meter"><span>fed</span><div class="track"></div><b id="fed">0</b></div>
   <div class="meter"><span>breaches</span><div class="track"></div><b id="breaches">0</b></div>
   <div class="meter"><span>fps</span><div class="track"></div><b id="fps">60</b></div>
 </div>
@@ -98,6 +101,7 @@
 <div id="hint" class="panel">
   <b>Move</b> the cursor to push the creature, <b>press</b> to push harder,
   <b>Shift</b> (or right-drag) to pull it. Dive it to the floor and it bounces.
+  <br>Leave it alone: it gets hungry and goes down to the plankton layer to graze.
   <br><kbd>R</kbd> new specimen &nbsp; <kbd>Space</kbd> pause &nbsp; <kbd>A</kbd> audio &nbsp; <kbd>H</kbd> hide this
 </div>
 <div id="buttons">
