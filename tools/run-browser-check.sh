@@ -4,6 +4,9 @@
 # Browsers are not downloadable here (no network), so Playwright is pointed at
 # the copies already in the Nix store. `--no-sandbox` is required because this
 # container cannot create user namespaces for Chromium's own sandbox.
+#
+# Golden frames are compared against tests/golden; run with UPDATE_GOLDEN=1 to
+# record the current frames there, GOLDEN_DIR to point them somewhere else.
 set -euo pipefail
 source "$(dirname "$0")/toolchain.sh"
 
