@@ -32,8 +32,8 @@ Audio is off until you click, because browsers forbid starting it before a gestu
 
 ## What to try
 
-- **Park the cursor just above the waterline and hold.** The creature surfaces, skims, and starts skipping.
-- **Shift-drag to the floor, then let go.** A body that is lighter than water and pressed against a floor rebounds, and `floor bounce` lights up.
+- **Park the cursor just under the creature and hold.** Pushed from below it pins itself against the surface: `skimming`, then `skittering` along the underside of it. Press, and it comes out of the water — held there, one seed spent 31 of 40 s airborne and crossed the surface hundreds of times.
+- **Shift-drag to the floor, then let go.** A body lighter than water and pressed against a floor rebounds, and `floor bounce` lights up (44 of them in 18 s of pulling). Hold the dive longer and the rebound on its own is fast enough to light `breach` — measured at 12 s down, 7 breaches from the release alone.
 - **Stay still.** After ~2 s the creature swims by itself, with a travelling wave along its body, and leaves a wake you did not cause. Watch a little longer and it turns nose-down and commits to the plankton layer; each bite is a note, and it shoots back up to the surface when it has had enough.
 - **Intercept a hunt.** Pull it off a feeding dive and let go — it picks the same mote back up. That is the whole loop of the thing: it has a goal you are interrupting, rather than a blob you are pushing.
 - **Compare the standing waves.** Move at a steady speed and the wake locks into a fixed pattern relative to you; stop, and the trench keeps sloshing.
@@ -43,7 +43,7 @@ Audio is off until you click, because browsers forbid starting it before a gestu
 ## How it works
 
 - `src/flux-pond.js` — the whole simulation, with no DOM, canvas or audio. A closed loop of 22 masses with perimeter, structural and bend springs, a radial area-preservation term, per-mass buoyancy/drag/meniscus forces, a pointer force, a `SurfaceField` height field, and the plankton layer the creature feeds on. Fixed 120 Hz substeps with velocity and step clamps.
-- `src/render.js` — draws a `World` into an injected 2D context. Owns no state. `creatureGeometry()` is the single definition of where the eye, the body and the tail fin are, and both the canvas renderer and the offline preview draw from it.
+- `src/render.js` — draws a `World` into an injected 2D context. Owns no state: the sunlight shafts, the bubble string and the plankton all have to be functions of the frame they are drawn from, which is also why a pinned frame is reproducible. `creatureGeometry()` is the single definition of where the eye, the body and the tail fin are, and both the canvas renderer and the offline preview draw from it.
 - `src/audio.js` — Web Audio graph built from the specimen's chord; the injected-context design is what makes it testable without an audio device.
 - `src/app.js` — fixed-timestep frame loop, input mapping, and the read-out panel. Holds no physics state.
 - `src/main.js` — constructs the concrete collaborators, starts the loop, reports failures instead of dying silently.
@@ -96,7 +96,7 @@ tools/recapture-golden.sh .tmp/review   # record frames somewhere for review
 tools/recapture-golden.sh               # ... and into tests/golden
 ```
 
-That script runs Chromium **twice** on purpose: the first session records, the second compares against what the first left. Frames that agree across two sessions — different wall clocks, different frame rates, different `requestAnimationFrame` timing — are pinned to the seed rather than to the machine's mood. On this host the two frames without a badge came out identical to the pixel; the one with a badge moved 0.55 %.
+That script runs Chromium **twice** on purpose: the first session records, the second compares against what the first left. Frames that agree across two sessions — different wall clocks, different frame rates, different `requestAnimationFrame` timing — are pinned to the seed rather than to the machine's mood. On this host two sessions agree **to the pixel on all three frames**, and a third run moved 0.006 % of one: the fps digits, the only number on screen that describes the machine instead of the seed. The last real source of drift was in the renderer rather than the test — the cursor ring pulsed off `Date.now()`, which is why everything the painter draws now depends on simulated time alone — and the 3 % budget is left as tolerance for antialiasing on other machines.
 
 ## Verified
 
