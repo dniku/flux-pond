@@ -18,7 +18,17 @@ then open <http://127.0.0.1:8000/>.
 
 ES modules are loaded over `http://`, so opening `index.html` with `file://` will not work — the browser refuses the imports. Any static server is fine (`python3 -m http.server 8000`); `serve.py` sets the MIME types that make a wrong one a blank page, and prints the URL. `PORT=8123 python3 serve.py` changes the port. Verified: `/` comes back `200 text/html`, `src/main.js` and `src/flux-pond.js` come back `200 text/javascript`, and a missing path 404s.
 
-No build step, no dependencies, no network access at runtime: no fonts, libraries, samples or images are fetched.
+No build step, no dependencies, no network access at runtime: no fonts, libraries, samples or images are fetched. The port comes from the environment: `PORT=8123 python3 serve.py`, or `HOST`/`PASEO_PORT`, which is what a Paseo daemon injects when it starts this as a workspace service script and allocates the port itself.
+
+### In a preview pane, or on a phone
+
+`flux-pond.html` is the whole toy in one file — 52 KB, the script inlined, nothing fetched — for the ways of opening this project that cannot ask for `src/*.js`. A chat preview pane that injects markup into a sandboxed frame has no base URL to resolve a module against, and `file://` refuses the import outright; both paint `index.html`'s panels over a black canvas, which looks like a broken toy rather than a blocked request. Observed: exactly that, in a phone preview pane, with the seed read-out still showing its `…` placeholder.
+
+```bash
+node tools/build-standalone.mjs   # regenerate flux-pond.html from index.html + src/
+```
+
+Open it from disk, link it into a chat, or serve the folder and use `/flux-pond.html`. It is generated, and a test rebuilds it and compares bytes, so a stale copy fails the suite rather than quietly showing old behaviour.
 
 ## Controls
 
@@ -30,9 +40,19 @@ No build step, no dependencies, no network access at runtime: no fonts, librarie
 | `R` | New specimen (a new seed is written to the URL) |
 | `Space` | Pause / resume |
 | `A` | Audio on / off |
+| `P` | Pull mode — for screens with no `Shift` |
+| `F` | Full screen |
 | `H` | Hide the help panel |
 
 Audio is off until you click, because browsers forbid starting it before a gesture. The drone is the specimen's own chord through a low-pass filter that follows depth, so diving muffles it; each time a mass breaks the surface it plays a note whose pitch comes from the impact speed, which is where the rhythm comes from. Underneath both, a sub-bass pulse follows how close the lurker is — silent at the surface, a slow throb that quickens as it closes, which is the one warning that works when you are not looking into the dark.
+
+### With a thumb
+
+On a phone there is no hover, no `Shift`, and no right button, so each of those has something on the glass: **drag** is the pointer, **holding** is a press, **Pull** is the mode, and every button is 44 px. The read-out keeps speed, depth and hunger visible and folds the other eight counters behind **more**; the help is one tappable line. `viewport-fit=cover` with the safe-area insets keeps the button row clear of a notch and the home indicator, and **Full** takes the rest of the glass back from the browser — Android WebView has no Fullscreen API, so that button hides itself there rather than lying.
+
+![Flux Pond at 390x844: compact read-out top left, the creature at the waterline with the lurker below, five buttons along the bottom edge](tests/golden/phone-5s.png)
+
+*The `phone-5s` golden frame: the same seed, a phone viewport, and the layout a finger gets. It is pinned by the same check as the desktop frames, along with hit-tests for 390x844, 360x760 and 844x390 landscape.*
 
 ## What to try
 
@@ -92,7 +112,7 @@ These found every real bug listed under *Verified* below.
 
 ### In a browser
 
-`tools/check.sh --browser` runs `tools/browser-check.mjs` through `tools/run-browser-check.sh`, which points Playwright at the Chromium in the Nix store and answers `https://fluxpond.test/**` from disk, so no socket is bound. Beyond the behavioural assertions it pins **four golden frames**, and logs the read-out of each so the image and the numbers can be checked against each other:
+`tools/check.sh --browser` runs `tools/browser-check.mjs` through `tools/run-browser-check.sh`, which points Playwright at the Chromium in the Nix store and answers `https://fluxpond.test/**` from disk, so no socket is bound. Beyond the behavioural assertions it pins **five golden frames**, and logs the read-out of each so the image and the numbers can be checked against each other:
 
 | frame | the state | what it is there to catch |
 | --- | --- | --- |
@@ -100,8 +120,9 @@ These found every real bug listed under *Verified* below.
 | `hunt-40s` | 40 s later: hunger 72 %, working the plankton band | the feeding layer, the depth tint, the `photic` label |
 | `tow-10s` | held for 10 s by a pull toward the floor | a submerged body, two badges lit at once, the cursor ring |
 | `lurker-2s` | 2 s of held press at full strength: depth 0.40, the lurker at arm's length, `fleeing` lit, `flights` 1 | the lurker at close range, and the counter that only the lurker moves |
+| `phone-5s` | 5 s at 390x844 with touch emulation | the phone layout, at the size the panels were not written for |
 
-Three of the four, as recorded — `idle-5s` is the picture at the top of this page:
+Three of them, as recorded — `idle-5s` is the picture at the top of this page:
 
 ![The same creature 40 s later, nose down toward the plankton band, hunger at 72 %](tests/golden/hunt-40s.png)
 ![Held down by a pull toward the floor, stretched vertical, two phenomenon badges lit at once](tests/golden/tow-10s.png)
@@ -119,9 +140,13 @@ The README links the golden frames themselves rather than keeping a second copy 
 
 That script runs Chromium **twice** on purpose: the first session records, the second compares against what the first left. Frames that agree across two sessions — different wall clocks, different frame rates, different `requestAnimationFrame` timing — are pinned to the seed rather than to the machine's mood. On this host two sessions agree to within 0.023 % of pixels on all four frames — the residual is the fps and counter digits, and a third run moved 0.006 % of one: the fps digits, the only number on screen that describes the machine instead of the seed. The last real source of drift was in the renderer rather than the test — the cursor ring pulsed off `Date.now()`, which is why everything the painter draws now depends on simulated time alone — and the 3 % budget is left as tolerance for antialiasing on other machines.
 
+Then the phone shapes. Everything a finger has to reach is hit-tested at 390x844, 360x760 and 844x390 landscape: no control under another panel, nothing off the glass, nothing smaller than 44 px, and both disclosures folded. Landscape is where this caught a real bug (17 below).
+
+Then the two files against the shape a preview pane makes — markup injected into an `allow-scripts` frame with an opaque origin, no base URL. `index.html` does not boot there (asserted, not assumed: if it ever did, `flux-pond.html` would be a candidate for deletion); `flux-pond.html` boots, paints the trench, and rerolls a specimen even though that frame refuses the history write the desktop page uses to put the seed in the URL. The same file is also opened from `file://` in a second context, where it needs no requests at all.
+
 ## Verified
 
-Observed, on Node v24.20 with the current patch: **76 automated checks pass** (`tools/check.sh`) — 40 simulation, 11 render, 12 audio, 13 app — plus `node --check` on all 12 source/test/tool JS files. **And 26 checks pass in headless Chromium** (`tools/check.sh --browser`), on the real page over `https://`, including the four golden frames.
+Observed, on Node v24.20 with the current patch: **82 automated checks pass** (`tools/check.sh`) — 40 simulation, 11 render, 12 audio, 19 app — plus `node --check` on all 13 source/test/tool JS files. **And 64 checks pass in headless Chromium** (`tools/check.sh --browser`): on the real page over `https://` including the five golden frames, three phone viewport layouts, the single file opened from `file://`, and the single file opened in an opaque-origin preview frame.
 
 Bugs found by those tests and fixed, each with a reproducing seed or input:
 
@@ -146,6 +171,9 @@ Numbers do not catch everything: 8–11 were found by rasterising a frame to PNG
 15. **`reset()` leaked the steering brain, so a new specimen inherited the last one's momentum.** It rebuilt the body, the field and the plankton, but not `idleSeconds`, `selfDrive`, `driveHeading`, `straightness` or `previousCentre` — nor `wanderPhases`, which are *derived from the seed*, so a rerolled creature swam with the previous specimen's wander. The `?seed=` promise of an exact replay was simply false. `World`'s constructor and `reset` now share one initialisation path, and a test compares a reset replay with a first boot to 1e-9.
 16. **Pressing did nothing.** Both the hint and the comment above the code say pressing pushes harder; the pressure ramp keyed only on the cursor being in the window, so a hover was already at full strength and `pointerdown` set nothing the force used. Hover is now 0.55 and press 1.0 — which also stops every tow starting at maximum differential stretch (strain ~2.0 against ~2.8 over 10 s) — and a test asserts press > hover > released.
 
+17. **Landscape is a phone, and only the stylesheet knew.** The CSS folds the hint and the telemetry on `max-width: 720px` *or* `max-height: 520px`; the JS that opens them at boot tested the width alone. At 844x390 the two disagreed and a phone on its side got the desktop panels — found by running the same layout assertions over a second viewport, which is the reason they run over three. The query and the media query are now the same condition, with a comment saying so.
+18. **The off-screen assertion in the browser check could never fail.** It filtered on `box.onscreen === false`, a property nothing ever set, so the comparison was `undefined === false` for every control and the check passed by construction — the same class of bug as 13, in a different file. It now reads `box.inside`, which is what was always meant, and it would have caught a panel pushed off the glass by the safe-area maths.
+
 The browser check itself had five bugs and had never run to completion: it read `#name` where the element is `#species`, probed `d[4]` of an RGBA pixel, sampled `app.fps` a few frames after boot (it is a 500 ms average), asserted that a click enables audio after a canvas gesture already had, and measured *net* displacement after a deliberately closed-loop wiggle. Worth listing because a check nobody has ever run is a hypothesis, not a guarantee.
 
 Two design corrections found by measurement rather than by a failing test: the background current described above, and pointer strength (a squared falloff left ~1.5 acceleration at one body-radius against 12.9 buoyancy, so the floor was unreachable and most phenomena could not be triggered; measured top speed went from 0.59 to ~2.4).
@@ -168,6 +196,8 @@ Two existing tests had to change, and both changes were the test encoding an old
 
 Observed in headless Chromium (Playwright, `--use-gl=swiftshader`, 1024×640, `?seed=20261027`): the page loads over `https://` with no page or console errors for the whole session; the canvas is neither blank nor black (probed every 23×17 px, >10 distinct colours, mean luma above 4); the loop reports ~60 fps; cursor input moves the creature and raises wake events; the HUD follows; `Shift`-drag gets it below the surface; `R` rerolls the seed and rewrites the URL; a canvas gesture is what switches audio on, the audio button toggles state and label, and the graph builds (drone voices > 0) without an exception; the plankton layer is live; the four golden frames match. See bug 14 for the one thing every non-browser assertion was happy about.
 
+Added with the phone pass, also observed in headless Chromium: at 390x844, 360x760 and 844x390 nothing a finger needs is under another panel, off the glass, or smaller than 44 px, and both disclosures come up folded; a real tap on Pull flips the field into attract mode and lights `aria-pressed`; a real tap on Full is granted by the browser and the button follows it, and the assertion is that the two agree rather than that fullscreen happened, because a phone browser is allowed to refuse. In an opaque-origin frame — the preview-pane shape — `index.html` shows its panels over an unpainted canvas while `flux-pond.html` runs, and rerolling there still swaps the specimen with the history write refused.
+
 Chromium needs escalated permission here: this container gives it no user namespace, so it runs `--no-sandbox`, and the browsers come out of the Nix store because nothing can be downloaded. The automated check answers requests through `page.route` from disk rather than binding a socket, so nothing in `tools/check.sh` goes through `serve.py` — it was verified separately, by binding it and requesting the page and its modules with `curl` (see *Run it*).
 
 Still needs a person rather than a harness:
@@ -180,6 +210,9 @@ Still needs a person rather than a harness:
 
 ## Limitations
 
+- **No real phone has driven this.** The phone layout is verified in emulated viewports (Chromium `isMobile` + `hasTouch`, three sizes, portrait and landscape), where safe-area insets read zero — so the notch and home-indicator maths is unexercised and only its syntax is checked. What is verified is that the layout does not overlap or clip, that taps register, and that the full-screen request is accepted and reported.
+- **A viewer that blocks scripts entirely cannot run the toy at any file size.** The page now says so in a `<noscript>` block instead of showing a silent black rectangle, which is the most any file can do about it.
+- **`flux-pond.html` is generated.** Edit `index.html` and `src/`, then `node tools/build-standalone.mjs`; editing the generated file directly is a file that survives until the next build.
 - The plankton do not swim, swarm, or react to the wake — they bob in place and are eaten. Nothing eats the creature, and hunger has no consequence beyond steering: it cannot starve, and it cannot die.
 - The water is deliberately at rest and the trench has no walls: there is no shoreline, and the camera scrolls forever.
 - `SurfaceField` is a 1024-cell global height field with a fixed advection speed, so waves do not genuinely disperse; they translate and decay.
