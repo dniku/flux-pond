@@ -693,6 +693,135 @@ test('the nose and tail are fixed material points opposite each other', () => {
   );
 });
 
+// --- the lurker ------------------------------------------------------------
+
+/*
+ * Holds a specimen down toward the floor the way a player pulling toward the
+ * bottom does, then lets go. Everything about the lurker has to be measured
+ * against this, because it is the only case where the two animals meet.
+ */
+function driveDeep(world, seconds, onStep = null) {
+  const step = 1 / 120;
+  const steps = Math.round(seconds / step);
+  for (let i = 0; i < steps; i += 1) {
+    const centre = world.creature.centroid();
+    world.setPointer({ x: centre.x + 0.15, y: 1.0, attract: true, active: true, pressure: 0.9 });
+    world.step(step);
+    world.followCamera(step);
+    if (onStep !== null) {
+      onStep();
+    }
+  }
+  world.setPointer({ active: false, pressure: 0.0 });
+}
+
+function freeRun(world, seconds) {
+  const steps = Math.round(seconds / (1 / 120));
+  for (let i = 0; i < steps; i += 1) {
+    world.step(1 / 120);
+    world.followCamera(1 / 120);
+  }
+}
+
+test('the lurker is a place, and the same seed puts it in the same place', () => {
+  const first = new World({ seed: 4242 });
+  const second = new World({ seed: 4242 });
+  const other = new World({ seed: 4243 });
+  driveDeep(first, 9.0);
+  driveDeep(second, 9.0);
+  assert(
+    first.lurker.x === second.lurker.x && first.lurker.y === second.lurker.y,
+    `same seed, different lurker: ${first.lurker.x},${first.lurker.y} vs ${second.lurker.x},${second.lurker.y}`
+  );
+  assert(first.lurker.home === second.lurker.home, 'same seed, different lair depth');
+  assert(other.lurker.home !== first.lurker.home, 'the lair depth does not vary by seed');
+});
+
+test('what lingers in the dark is noticed, and one flight is one event', () => {
+  let frightened = 0;
+  let fledWhileHeld = false;
+  for (const seed of [20261027, 42, 909090, 1234, 145, 7]) {
+    const world = new World({ seed });
+    // Fear has to be able to fire while a cursor is still holding the body, or
+    // the animal is just a thing being dangled: it wants to leave.
+    driveDeep(world, 14.0, () => {
+      if (world.lurker.near && world.pointer.active && world.selfDrive > 0.9) {
+        fledWhileHeld = true;
+      }
+    });
+    const latched = world.metrics.fleeCount;
+    if (latched > 0) {
+      frightened += 1;
+    }
+    freeRun(world, 8.0);
+    // The counter is read by the HUD, and it once counted every substep of one
+    // brush with the band -- 8 for a flight that lasted a tenth of a second.
+    assert(
+      world.metrics.fleeCount <= 4,
+      `one dive produced ${world.metrics.fleeCount} flee events, so the counter is counting frames`
+    );
+    assert(latched === 0 || world.metrics.fleeCount >= latched, 'events went backwards');
+  }
+  assert(frightened > 0, 'no specimen was ever frightened, so the lurker is decoration');
+  assert(fledWhileHeld, 'fear does not outrun the idle ramp, so a held animal cannot want to go');
+});
+
+test('fear only exists in the dark, and it aims for the way out', () => {
+  for (const seed of [7, 42, 145, 20261027, 3, 88]) {
+    const world = new World({ seed });
+    driveDeep(world, 14.0);
+    for (let i = 0; i < 1200; i += 1) {
+      world.step(1 / 120);
+      world.followCamera(1 / 120);
+      if (world.phenomena.flee) {
+        const depth = world.creature.centroid().y;
+        assert(
+          depth > world.lurker.home - 0.2,
+          `fleeing at depth ${depth.toFixed(2)}, far from the lair at ${world.lurker.home.toFixed(2)}`
+        );
+      }
+    }
+    assert(
+      world.creature.centroid().y < 0.2,
+      `a specimen released from the deep was still at ${world.creature.centroid().y.toFixed(2)} ten seconds later`
+    );
+  }
+});
+
+test('it does not follow anything up into the light', () => {
+  const world = new World({ seed: 20261027 });
+  driveDeep(world, 10.0);
+  const home = world.lurker.home;
+  for (let i = 0; i < 3600; i += 1) {
+    world.step(1 / 120);
+    world.followCamera(1 / 120);
+    assert(world.lurker.y >= home - 1e-9, `it rose off its lair to ${world.lurker.y.toFixed(3)}`);
+    if (world.creature.centroid().y < home - 0.15) {
+      assert(world.lurker.near === false, 'it is still hunting something up in the light');
+    }
+  }
+});
+
+test('an animal left alone almost never meets it, and goes on feeding', () => {
+  let contactSeconds = 0.0;
+  for (const seed of [7, 42, 145, 20261027, 3, 88]) {
+    const world = new World({ seed });
+    const steps = Math.round(90.0 / (1 / 120));
+    for (let i = 0; i < steps; i += 1) {
+      world.step(1 / 120);
+      world.followCamera(1 / 120);
+      if (world.lurker.near) {
+        contactSeconds += 1 / 120;
+      }
+    }
+    assert(world.metrics.fedCount >= 6, `idle specimen fed only ${world.metrics.fedCount} times`);
+  }
+  assert(
+    contactSeconds < 5.0,
+    `left alone for 9 minutes it spent ${contactSeconds.toFixed(1)}s in contact, so the lair is too shallow`
+  );
+});
+
 // --- report ---------------------------------------------------------------
 const results = { passed, failed: failures.length };
 process.stdout.write(JSON.stringify(results) + '\n');

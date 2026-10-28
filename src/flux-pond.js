@@ -1098,22 +1098,76 @@ function updateSelfDrive(world, dt) {
     world.driveHeading = lerpAngle(world.driveHeading, desired, world.foodBlend);
     targetY = world.foodTarget.y * world.foodBlend;
   }
+  /*
+   * Fear, like hunger, moves the target rather than adding a force: the depth
+   * controller is aimed at the surface -- just past it, because an animal afraid
+   * of the deep will leave it -- and the heading turns away from whatever it is
+   * afraid of. Fear also outruns the idle ramp, so a specimen can want to go even
+   * while a cursor is holding it.
+   */
+  const lurker = world.lurker;
+  const fleeing = lurker.near === true;
+  if (fleeing) {
+    const awayFrom = centre.x >= lurker.x ? 0.0 : Math.PI;
+    world.driveHeading = lerpAngle(world.driveHeading, awayFrom, clamp(2.5 * dt, 0.0, 1.0));
+    world.selfDrive = Math.max(world.selfDrive, 1.0);
+  }
   const hunt = world.foodBlend;
-  const depthGain = lerp(WORLD.selfDepthGain, FOOD.huntDepthGain, hunt);
+  const targetDepth = fleeing ? LURKER.aimAbove : targetY;
+  const depthGain = fleeing ? LURKER.gain : lerp(WORLD.selfDepthGain, FOOD.huntDepthGain, hunt);
   // Cancels the upward excess buoyancy of a submerged body, so a committed dive
   // can actually commit. Zero whenever the creature is not hunting, which is
   // what keeps the surface trim untouched by any of this.
   const excessBuoyancy = WORLD.gravity / WORLD.floatTrim - WORLD.gravity;
   world.driveVertical = clamp(
-    (targetY - centre.y) * depthGain + hunt * FOOD.diveThrust * excessBuoyancy,
+    (targetDepth - centre.y) * depthGain + hunt * FOOD.diveThrust * excessBuoyancy,
     -FOOD.authority,
     FOOD.authority
   );
 }
 
+/*
+ * Where the lurker is. Purely kinematic and a function of the seed and the
+ * creature's own history, so it costs no solver time and a replay puts it in the
+ * same place. It homes only while something is in its band, and it will not
+ * follow anything up into the light: the shallower of the two is always safe.
+ */
+function updateLurker(world, dt) {
+  const lurker = world.lurker;
+  if (world.lurkerEnabled !== true) {
+    return;
+  }
+  const centre = world.creature.centroid();
+  const inItsBand = centre.y >= lurker.home;
+  if (inItsBand || lurker.hunt > 0.0) {
+    const dx = centre.x - lurker.x;
+    const reach = LURKER.speed * (inItsBand ? 1.0 : 0.3) * dt;
+    lurker.x += Math.sign(dx) * Math.min(Math.abs(dx), reach);
+    lurker.y = lerp(
+      lurker.y,
+      inItsBand ? Math.max(lurker.home, centre.y - 0.1) : lurker.home,
+      clamp(1.4 * dt, 0.0, 1.0)
+    );
+    lurker.hunt = clamp(lurker.hunt + (inItsBand ? dt : -dt * 0.6), 0.0, LURKER.patience);
+  } else {
+    lurker.x += Math.cos(world.time * 0.05 + lurker.phase) * LURKER.speed * 0.3 * dt;
+    lurker.y = lerp(lurker.y, lurker.home, clamp(0.5 * dt, 0.0, 1.0));
+  }
+  lurker.distance = Math.hypot(centre.x - lurker.x, centre.y - lurker.y);
+  // Threat is a property of the band, not of proximity alone: a specimen at the
+  // surface directly above it is not being hunted, and must not read as one.
+  lurker.near = lurker.distance < LURKER.notice && centre.y > lurker.home - LURKER.edge;
+  lurker.nearness = clamp(1.0 - lurker.distance / LURKER.sight, 0.0, 1.0);
+  // Geometry, not physics: the renderer needs to know which end is the head and
+  // is not going to infer it from the World's internals.
+  lurker.facing = centre.x >= lurker.x ? 1 : -1;
+  lurker.visible = lurker.distance < LURKER.sight;
+}
+
 function stepCreature(world, dt) {
   const creature = world.creature;
   const field = world.field;
+  updateLurker(world, dt);
   updateSelfDrive(world, dt);
   const n = creature.points;
   const previousX = world.scratchX;
@@ -1184,6 +1238,9 @@ class World {
      * measured on a creature that has somewhere it would rather be.
      */
     this.foodEnabled = options.food !== false;
+    /* Off only where that is the point: a test compares a specimen towed deep
+     * where something is down there with the same seed and tow where isn't. */
+    this.lurkerEnabled = options.lurker !== false;
     /*
      * Three things belong to the trench or to the session rather than to a
      * specimen, so the constructor owns them and `reset` deliberately leaves
@@ -1215,7 +1272,7 @@ class World {
       breachCount: 0,
       bounceCount: 0,
       fedCount: 0,
-      diveHunts: 0,
+      fleeCount: 0,
       solverStrain: 0.0
     };
     this.phenomena = {
@@ -1409,6 +1466,15 @@ class World {
     }
     this.settle('bounce', bounced, dt, 0.02, 0.2);
 
+    // Counted off the latched phenomenon, not off the raw predicate: `settle`
+    // needs 0.15 s of evidence, and counting first would count every substep of a
+    // brush with the band instead of the one flight it turns into.
+    const wasFleeing = this.phenomena.flee;
+    this.settle('flee', this.lurker.near === true, dt, 0.15, 0.4);
+    if (this.phenomena.flee && !wasFleeing) {
+      this.metrics.fleeCount += 1;
+    }
+
     if (this.metrics.solverStrain < creature.strain) {
       this.metrics.solverStrain = creature.strain;
     }
@@ -1527,6 +1593,20 @@ class World {
     this.foodBlend = 0.0;
     this.feedPops = [];
     this.hunger = FOOD.startHunger;
+    const lair = makeRng((this.seed ^ 0x2f1c1c1d) >>> 0);
+    this.lurker = {
+      x: this.originX + 1.6 + lair() * 1.8,
+      y: LURKER.homeTop + lair() * LURKER.homeSpan,
+      home: 0.0,
+      phase: lair() * Math.PI * 2,
+      hunt: 0.0,
+      radius: LURKER.radius,
+      distance: Infinity,
+      nearness: 0.0,
+      near: false,
+      visible: false
+    };
+    this.lurker.home = this.lurker.y;
     const wander = makeRng((this.seed ^ 0x5bf03635) >>> 0);
     this.wanderPhases = [wander() * Math.PI * 2, wander() * Math.PI * 2, wander() * Math.PI * 2];
     this.idleSeconds = 0.0;
@@ -1544,6 +1624,54 @@ class World {
     this.dwellStates = {};
   }
 }
+
+/*
+ * Something at risk in the deep.
+ *
+ * The feeding layer gave the creature a reason to leave the waterline; the
+ * missing half was a reason to hesitate about it. So below a depth that varies by
+ * seed there is an animal with no physics of its own -- it does not swim, it is
+ * not pushed, it cannot be hurt -- which is deliberately the smallest thing that
+ * turns the strata into a map of risk and reward: it occupies a place, it comes
+ * toward anything that lingers in that place, and it is slower than an animal
+ * that has decided to leave.
+ *
+ * It adds no force either. Fear moves the target of the depth controller the same
+ * way hunger does, and the direction the heading blends toward, which is why a
+ * frightened specimen behaves like one animal rather than two steering laws
+ * arguing.
+ */
+const LURKER = {
+  /*
+   * Lair depth, and how much it varies by seed. The band has to be somewhere a
+   * specimen can be taken and nowhere it goes by itself: a hard pull reaches
+   * about 0.52 and an idle animal dips to about 0.50 at most, so this puts the
+   * lair in the overlap -- a dive on some seeds means going where something
+   * lives, while leaving the animal alone almost never brings it there: over 8
+   * seeds x 120 s idle it is 0.1 s of contact and no flight at all.
+   */
+  homeTop: 0.40,
+  homeSpan: 0.22,
+  radius: 0.15,
+  speed: 0.34,
+  sight: 2.8,
+  notice: 1.0,
+  /*
+   * How far above the lair depth the threat still counts. Swept, not tasted,
+   * over the same 8 seeds: a hard 14 s dive then a release, against 120 s left
+   * alone. The margin trades those two against each other -- dive contact runs
+   * 4.0 s / 10.2 s / 13.1 s and idle contact 0.0 s / 0.1 s / 1.7 s at 0.15 /
+   * 0.22 / 0.30 -- so 0.22 keeps the dive dramatic without letting an untouched
+   * specimen wander into it. Flights are 8 at every margin, one per specimen:
+   * the margin sets how long being hunted reads, not how often it happens.
+   * Feeding is the same at every margin (100 bites per 8 seeds x 120 s idle),
+   * which is the whole design point: the deep costs attention, not starvation.
+   */
+  edge: 0.22,
+  patience: 2.5,
+  gain: 9.0,
+  aimAbove: -0.12
+};
 
 /* Note names for the procedural soundtrack, pentatonic by default. */
 const SCALES = {
@@ -1594,6 +1722,7 @@ function sampleWavetable(table, phase) {
 const FluxPond = {
   WORLD,
   FOOD,
+  LURKER,
   LAYERS,
   PHENOMENA,
   SPECIES,
@@ -1625,6 +1754,7 @@ const FluxPond = {
 export {
   WORLD,
   FOOD,
+  LURKER,
   LAYERS,
   PHENOMENA,
   SPECIES,
