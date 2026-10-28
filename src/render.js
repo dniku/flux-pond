@@ -465,6 +465,96 @@ function drawEye(context, geometry, time) {
 }
 
 /*
+ * The lurker: the one thing in the trench that is drawn rather than simulated,
+ * and the reason the deep is somewhere you choose to go rather than somewhere you
+ * fall. It is a silhouette with a back edge catching the light and an eye, which
+ * is what survives at depth -- and it resolves out of the dark as it comes closer,
+ * so you can watch it decide to follow you.
+ *
+ * Everything it draws is published by the simulation (`x`, `y`, `radius`,
+ * `nearness`, `facing`), because the renderer's rule is that it looks at a World
+ * and never has to know how any of it was arrived at.
+ */
+function drawLurker(context, camera, world, time) {
+  const lurker = world.lurker;
+  if (lurker === undefined || lurker.visible !== true) {
+    return;
+  }
+  const scale = pixelsPerUnit(camera);
+  const px = camera.screenX(lurker.x);
+  const py = camera.screenY(lurker.y);
+  const rx = Math.max(2.0, lurker.radius * 2.05 * scale);
+  const ry = Math.max(1.5, lurker.radius * 0.8 * scale);
+  const presence = 0.2 + 0.55 * lurker.nearness * lurker.nearness;
+  const facing = lurker.facing;
+  const body = hsl(214, 48, 5, presence);
+  const sway = Math.sin(time * 1.05 + lurker.phase);
+
+  /*
+   * Caudal fin first, so the body covers its root: a two-lobed fan off a narrow
+   * stock, swaying. A plain triangle reads as a geometric shape pasted behind an
+   * ellipse; the notch and the stock are what make it a tail.
+   */
+  const stockX = px - facing * rx * 0.78;
+  const reach = rx * 0.52;
+  const spread = ry * (1.12 + 0.22 * sway);
+  context.beginPath();
+  context.moveTo(stockX, py);
+  context.lineTo(stockX - facing * reach, py - spread + sway * ry * 0.3);
+  context.lineTo(stockX - facing * reach * 0.34, py + sway * ry * 0.22);
+  context.lineTo(stockX - facing * reach, py + spread + sway * ry * 0.3);
+  context.closePath();
+  context.fillStyle = body;
+  context.fill();
+
+  // Dorsal fin, half-furled: the only part of the outline that is not smooth.
+  context.beginPath();
+  context.moveTo(px - facing * rx * 0.02, py - ry * 0.86);
+  context.lineTo(px - facing * rx * 0.5, py - ry * (1.5 + 0.12 * sway));
+  context.lineTo(px - facing * rx * 0.66, py - ry * 0.55);
+  context.closePath();
+  context.fillStyle = body;
+  context.fill();
+
+  context.beginPath();
+  context.ellipse(px, py, rx, ry, 0, 0, Math.PI * 2);
+  context.fillStyle = body;
+  context.fill();
+  // A second, smaller ellipse toward the head: two ellipses read as an animal
+  // with a head and a belly, where one reads as a disc.
+  context.beginPath();
+  context.ellipse(px + facing * rx * 0.46, py + ry * 0.1, rx * 0.5, ry * 0.66, 0, 0, Math.PI * 2);
+  context.fillStyle = body;
+  context.fill();
+
+  // The top edge, where what little light there is grazes its back. Without this
+  // the body is a darker rectangle of water rather than an animal.
+  context.beginPath();
+  context.ellipse(px, py, rx * 0.97, ry * 0.9, 0, Math.PI * 1.06, Math.PI * 1.94);
+  context.strokeStyle = hsl(190, 74, 64, 0.1 + 0.32 * lurker.nearness);
+  context.lineWidth = Math.max(1.0, ry * 0.1);
+  context.stroke();
+
+  // Small, low, and amber: an eye that size on a body that big is the only
+  // friendly thing about it, and it is the part you end up watching.
+  const eyeR = Math.max(1.0, ry * 0.17);
+  const eyeX = px + facing * rx * 0.6;
+  const eyeY = py + ry * 0.1;
+  context.beginPath();
+  context.arc(eyeX, eyeY, eyeR * 2.1, 0, Math.PI * 2);
+  context.fillStyle = hsl(42, 92, 66, 0.05 + 0.2 * lurker.nearness);
+  context.fill();
+  context.beginPath();
+  context.arc(eyeX, eyeY, eyeR, 0, Math.PI * 2);
+  context.fillStyle = hsl(42, 90, 72, 0.35 + 0.55 * lurker.nearness);
+  context.fill();
+  context.beginPath();
+  context.arc(eyeX + facing * eyeR * 0.34, eyeY, eyeR * 0.46, 0, Math.PI * 2);
+  context.fillStyle = 'hsla(220,60%,5%,0.92)';
+  context.fill();
+}
+
+/*
  * The plankton layer: a faint band, the motes in it, and the rings left where
  * the creature bit one. Everything is read off the World through its own
  * accessor, so the renderer never learns that positions come from a hash, and
@@ -623,6 +713,7 @@ function render(context, world, camera, time) {
   drawSurface(context, camera, world.field);
   drawSurfaceLight(context, camera, world.field, time);
   drawWake(context, camera, world.field);
+  drawLurker(context, camera, world, time);
   drawPlankton(context, camera, world);
   drawCreature(context, camera, world.creature, time);
   drawBubbles(context, camera, world);
