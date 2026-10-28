@@ -39,9 +39,11 @@ function boot() {
   const app = new PondApp(document, canvas, { audio, seed });
   app.attach();
 
+  document.querySelector('#pull').addEventListener('click', () => app.togglePull());
   document.querySelector('#reroll').addEventListener('click', () => app.newCreature());
   document.querySelector('#pause').addEventListener('click', () => app.togglePause());
   document.querySelector('#audio').addEventListener('click', () => void app.toggleAudio());
+  document.querySelector('#full').addEventListener('click', () => void app.toggleFullscreen());
 
   // A thrown frame is reported once and the loop stops: continuing after a
   // render exception would spam the console and burn the GPU.

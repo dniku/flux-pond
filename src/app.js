@@ -81,6 +81,12 @@ class PondApp {
     this.pressure = 0.0;
     this.pointerInside = false;
     this.pressing = false;
+    /*
+     * Pull without a modifier key. `Shift` and right-drag are both unreachable
+     * on a touch screen, and a phone is a large share of the places this gets
+     * opened, so the mode lives on a button as well as on the keyboard.
+     */
+    this.pullMode = false;
     this.badges = new Map();
     this.processedRipples = new WeakSet();
     this.processedEvents = new WeakSet();
@@ -95,7 +101,10 @@ class PondApp {
       this.pressing = true;
       this.onPointerMove(event);
       this.world.setPointer({ active: true });
-      void this.enableAudio();
+      // The first touch is the gesture that lets audio start. It is also
+      // the first moment we learn whether this browser has Web Audio at all,
+      // and a rejection here must not reach the pointer handler that called it.
+      this.enableAudio().catch(() => this.toast('No audio in this browser'));
     });
     canvas.addEventListener('pointerup', (event) => {
       canvas.releasePointerCapture?.(event.pointerId);
@@ -110,6 +119,29 @@ class PondApp {
     });
     // Right-drag is "pull"; the browser menu would otherwise eat the gesture.
     canvas.addEventListener('contextmenu', (event) => event.preventDefault());
+    /*
+     * The hint and the extra telemetry are disclosures, and nothing but JS knows
+     * whether there is room to leave them open: expanded on a desktop canvas, a
+     * single tappable line each on a phone. The query is the CSS phone query
+     * turned round -- narrow *or* short, because a phone on its side is 844 wide
+     * and 390 tall and is not roomy -- so the stylesheet and this cannot
+     * disagree, which they did when only the width was compared.
+     *
+     * `matchMedia` is absent in jsdom, which is the same answer as "narrow":
+     * stay collapsed rather than throw.
+     */
+    const roomy = this.document.defaultView
+      ?.matchMedia?.('(min-width: 721px) and (min-height: 521px)')?.matches === true;
+    for (const id of ['hint', 'telemetry']) {
+      const disclosure = this.document.querySelector(`#${id}`);
+      if (disclosure !== null) {
+        disclosure.open = roomy;
+      }
+    }
+    this.syncFullscreen();
+    // Escape leaves full screen without asking this code, so the button is
+    // re-read from the document rather than tracked in a field of its own.
+    this.document.addEventListener('fullscreenchange', () => this.syncFullscreen());
     this.document.addEventListener('keydown', (event) => this.onKey(event));
     if (typeof this.document.defaultView !== 'undefined') {
       this.document.defaultView.addEventListener('resize', () => this.resize());
@@ -135,7 +167,7 @@ class PondApp {
     }
     const pixelX = ((event.clientX - rect.left) / rect.width) * this.canvas.width;
     const pixelY = ((event.clientY - rect.top) / rect.height) * this.canvas.height;
-    const pulling = event.shiftKey === true || event.buttons === 2;
+    const pulling = event.shiftKey === true || event.buttons === 2 || this.pullMode === true;
     this.pointerInside = true;
     this.world.setPointer({
       x: this.camera.worldX(pixelX),
@@ -161,6 +193,14 @@ class PondApp {
       case 'A':
         void this.toggleAudio();
         break;
+      case 'p':
+      case 'P':
+        this.togglePull();
+        break;
+      case 'f':
+      case 'F':
+        void this.toggleFullscreen();
+        break;
       case 'h':
       case 'H': {
         const hint = this.document.querySelector('#hint');
@@ -183,16 +223,79 @@ class PondApp {
     }
   }
 
+  /*
+   * A browser with no Web Audio is allowed to refuse, and the button then says
+   * what it always said. The toy swims on either way.
+   */
   async toggleAudio() {
     if (this.audio.enabled) {
       this.audio.disable();
     } else {
-      await this.enableAudio();
+      try {
+        await this.enableAudio();
+      } catch {
+        this.toast('No audio in this browser');
+      }
     }
     const button = this.document.querySelector('#audio');
     if (button !== null) {
       button.textContent = this.audio.enabled ? 'Audio on' : 'Audio off';
     }
+  }
+
+  /*
+   * Full screen, because on a phone the difference between a preview sheet and
+   * the whole glass is most of the toy. The engine can refuse (no gesture, an
+   * embedded frame that forbids it) and the API can be absent altogether
+   * (Android WebView), so the button states what the document says rather than
+   * what was asked for, and hides itself where there is nothing to toggle.
+   */
+  isFullscreen() {
+    const element = this.document.fullscreenElement;
+    return element !== null && element !== undefined;
+  }
+
+  syncFullscreen() {
+    const button = this.document.querySelector('#full');
+    if (button === null) {
+      return;
+    }
+    if (typeof this.document.documentElement?.requestFullscreen !== 'function') {
+      button.hidden = true;
+      return;
+    }
+    button.setAttribute('aria-pressed', String(this.isFullscreen()));
+  }
+
+  async toggleFullscreen() {
+    const wasFullscreen = this.isFullscreen();
+    const transition = wasFullscreen
+      ? this.document.exitFullscreen?.()
+      : this.document.documentElement?.requestFullscreen?.();
+    if (transition === null || transition === undefined) {
+      this.toast('Full screen is not available here');
+      return false;
+    }
+    try {
+      await transition;
+    } catch {
+      this.toast('The browser refused full screen');
+    }
+    this.syncFullscreen();
+    return this.isFullscreen();
+  }
+
+  /*
+   * Flip the pull mode and let the button say which one is on, the same way the
+   * audio button carries its own label.
+   */
+  togglePull() {
+    this.pullMode = !this.pullMode;
+    const button = this.document.querySelector('#pull');
+    if (button !== null) {
+      button.setAttribute('aria-pressed', String(this.pullMode));
+    }
+    return this.pullMode;
   }
 
   newCreature() {
@@ -204,7 +307,16 @@ class PondApp {
     }
     const url = new URL(this.document.location.href);
     url.searchParams.set('seed', String(this.seed));
-    this.document.defaultView?.history.replaceState(null, '', url);
+    try {
+      this.document.defaultView?.history.replaceState(null, '', url);
+    } catch {
+      // A document with no URL of its own -- `file://` in some engines, a
+      // srcdoc WebView -- refuses a history write outright. Chromium and a
+      // served page take the seed into the URL; those origins keep it in the
+      // read-out, which is the same number. WebKit could not be started in this
+      // container to find out which side it is on, so the failure is expected
+      // here rather than hypothetical.
+    }
     this.toast(`${this.specimen.name} \u00b7 seed ${this.seed}`);
     this.updatePanel();
   }

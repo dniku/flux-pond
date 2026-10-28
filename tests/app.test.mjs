@@ -496,6 +496,196 @@ await test('every image the README links exists and is a PNG', async () => {
   assert(broken.length === 0, `README images broken: ${broken.join(', ')}`);
 });
 
+/*
+ * Shift and right-drag do not exist on a touch screen, so pull has to be
+ * reachable from something a finger can hit.
+ */
+await test('the pull toggle puts the pointer field into attract mode', async () => {
+  const env = await bootApp();
+  step(env, 5);
+  const button = env.window.document.querySelector('#pull');
+  assert(button !== null, 'no #pull button on the page');
+
+  const move = (x, y) =>
+    env.canvas.dispatchEvent(new env.window.PointerEvent('pointermove', { clientX: x, clientY: y, bubbles: true }));
+
+  move(300, 300);
+  assert(env.app.world.pointer.attract === false, 'the field attracts before anything asks it to');
+
+  // The click wiring lives in main.js, which jsdom never fetches; the real page
+  // check clicks the real button. Here: does the mode reach the field?
+  env.app.togglePull();
+  move(300, 300);
+  assert(env.app.world.pointer.attract === true, 'pull button on, but the field still pushes');
+  assert(
+    button.getAttribute('aria-pressed') === 'true',
+    'the button does not say which mode is on'
+  );
+
+  // Shift still works on top of it, and turning the toggle off returns to push.
+  env.window.document.dispatchEvent(new env.window.KeyboardEvent('keydown', { key: 'P', bubbles: true }));
+  assert(env.app.pullMode === false, 'P did not toggle pull back off');
+  move(300, 300);
+  assert(env.app.world.pointer.attract === false, 'P off, but the field still attracts');
+  assert(button.getAttribute('aria-pressed') === 'false', 'aria-pressed left stuck on');
+});
+
+/*
+ * A phone has no room for the whole read-out, and a page that decides this in
+ * CSS alone cannot: the panels are positioned by the browser and opened by this
+ * code. jsdom reports no matchMedia, which is the same answer as "narrow" -- the
+ * collapsed case is the default one here, and the wide case is faked.
+ */
+await test('the hint and the telemetry are folded away until there is room', async () => {
+  const narrow = await bootApp();
+  assert(
+    narrow.window.document.querySelector('#hint').open === false,
+    'the hint opened itself where there is no room'
+  );
+  assert(
+    narrow.window.document.querySelector('#telemetry').open === false,
+    'eight extra counters opened across a phone screen'
+  );
+
+  const wide = await boot();
+  const canvas = wide.window.document.querySelector('#pond');
+  const app = new PondApp(wide.window.document, canvas, { audio: new wide.StubAudio(), seed: 7 });
+  wide.window.matchMedia = () => ({ matches: true });
+  app.attach();
+  assert(wide.window.document.querySelector('#hint').open === true, 'a desktop canvas lost its hint');
+  assert(
+    wide.window.document.querySelector('#telemetry').open === true,
+    'a desktop canvas hid the counters it has room for'
+  );
+});
+
+/*
+ * Full screen is what turns a preview sheet into the whole glass, and the two
+ * ways it fails -- no API (Android WebView), or an engine that refuses the
+ * request -- both have to leave the toy running and the button telling the truth.
+ */
+await test('full screen hides the button where the API is missing', async () => {
+  const env = await bootApp();
+  const button = env.window.document.querySelector('#full');
+  assert(
+    typeof env.window.document.documentElement.requestFullscreen !== 'function',
+    'jsdom grew requestFullscreen, so this no longer covers the missing-API case'
+  );
+  assert(button.hidden === true, 'a full screen button that can do nothing stayed on screen');
+  assert((await env.app.toggleFullscreen()) === false, 'toggle claimed full screen with no API');
+});
+
+await test('the full screen button follows the document, including a refusal', async () => {
+  const env = await bootApp();
+  const { document } = env.window;
+  const button = document.querySelector('#full');
+  const rootElement = document.documentElement;
+  let entered = false;
+  Object.defineProperty(document, 'fullscreenElement', {
+    configurable: true,
+    get: () => (entered ? rootElement : null)
+  });
+  rootElement.requestFullscreen = () => {
+    entered = true;
+    return Promise.resolve();
+  };
+  document.exitFullscreen = () => {
+    entered = false;
+    return Promise.resolve();
+  };
+  button.hidden = false;
+
+  assert((await env.app.toggleFullscreen()) === true, 'the request was made but the button does not know');
+  assert(button.getAttribute('aria-pressed') === 'true', 'aria-pressed does not match the document');
+
+  // Toggling again goes the other way, through the document rather than a field.
+  assert((await env.app.toggleFullscreen()) === false, 'the second toggle did not leave full screen');
+  assert(button.getAttribute('aria-pressed') === 'false', 'the button stayed lit after exiting');
+
+  // Escape leaves full screen without going through this code at all.
+  entered = false;
+  document.dispatchEvent(new env.window.Event('fullscreenchange'));
+  assert(button.getAttribute('aria-pressed') === 'false', 'a browser-side exit left the button lit');
+
+  // A refusal (embedded frame, no user gesture) is a resolved toy, not a crash.
+  rootElement.requestFullscreen = () => Promise.reject(new Error('refused'));
+  assert((await env.app.toggleFullscreen()) === false, 'a refusal reported full screen');
+  assert(
+    document.querySelector('#toast').textContent.includes('refused'),
+    `a refusal went unreported: ${document.querySelector('#toast').textContent}`
+  );
+});
+
+/*
+ * A WebView with no Web Audio rejects the enable call that a first touch makes.
+ * Sound is a bonus; the pointer gesture that asked for it has to keep working.
+ */
+await test('a browser with no audio reports it and carries on', async () => {
+  const env = await boot();
+  const canvas = env.window.document.querySelector('#pond');
+  const audio = {
+    enabled: false,
+    async enable() {
+      throw new Error('Web Audio is not available in this browser.');
+    },
+    disable() {
+      this.enabled = false;
+    }
+  };
+  const app = new PondApp(env.window.document, canvas, { audio, seed: 11 });
+  app.attach();
+
+  await app.toggleAudio();
+  assert(
+    env.window.document.querySelector('#audio').textContent === 'Audio off',
+    'the button claimed audio that was never started'
+  );
+  assert(
+    env.window.document.querySelector('#toast').textContent.includes('No audio'),
+    `silence went unexplained: ${env.window.document.querySelector('#toast').textContent}`
+  );
+
+  // The same path fires from pointerdown, where a rejection would surface as an
+  // unhandled promise rather than a message.
+  canvas.dispatchEvent(new env.window.PointerEvent('pointerdown', { clientX: 100, clientY: 100, bubbles: true }));
+  await Promise.resolve();
+  assert(app.world.pointer.active === true, 'the gesture that failed at audio also failed at the toy');
+});
+
+/*
+ * flux-pond.html is what a preview pane opens -- the one file that boots when
+ * nothing can be fetched. A stale bundle is a file that works but shows old
+ * behaviour, which is the worst kind of artifact to trust.
+ */
+await test('the standalone single-file build is up to date', async () => {
+  const { renderStandalone } = await import(path.join(root, 'tools/build-standalone.mjs'));
+  let expected;
+  try {
+    expected = renderStandalone();
+  } catch (error) {
+    // esbuild genuinely absent: skip rather than fail, as pngjs does elsewhere.
+    if (/esbuild is not available/.test(error.message)) {
+      return;
+    }
+    throw error;
+  }
+  const committed = await readFile(path.join(root, 'flux-pond.html'), 'utf8');
+  assert(
+    committed === expected,
+    `flux-pond.html is stale (${expected.length} B expected, ${committed.length} B committed) -- run node tools/build-standalone.mjs`
+  );
+  // The point of the file is that it fetches nothing: no script tag with an
+  // src, no relative import left in the inlined bundle.
+  assert(
+    !/<script[^>]*\bsrc=/i.test(committed),
+    'the standalone build still loads a script from disk'
+  );
+  assert(
+    !/\bfrom\s+['"]\.\//.test(committed),
+    'the standalone build still contains a relative module import'
+  );
+});
+
 process.stdout.write(JSON.stringify({ passed, failed: failures.length }) + '\n');
 for (const failure of failures) {
   process.stdout.write(`\nFAIL: ${failure.name}\n  ${failure.message}\n`);
