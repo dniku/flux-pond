@@ -81,7 +81,6 @@ class PondApp {
     this.pressure = 0.0;
     this.pointerInside = false;
     this.pressing = false;
-    this.droneStarted = false;
     this.badges = new Map();
     this.processedRipples = new WeakSet();
     this.processedEvents = new WeakSet();
@@ -119,10 +118,9 @@ class PondApp {
 
   async enableAudio() {
     await this.audio.enable();
-    if (!this.droneStarted) {
-      this.audio.startDrone(this.specimen);
-      this.droneStarted = true;
-    }
+    // Starts the bed the first time and puts it in this specimen's key after
+    // that; the audio module owns whether a bed already exists.
+    this.audio.retune(this.specimen);
   }
 
   /*
@@ -201,10 +199,8 @@ class PondApp {
     this.seed = Math.floor(Math.random() * 0x100000000) >>> 0;
     this.world.reset(this.seed);
     this.specimen = withFrequencies(makeSpecimen(this.seed), noteFrequency);
-    this.droneStarted = false;
     if (this.audio.enabled) {
-      this.audio.startDrone(this.specimen);
-      this.droneStarted = true;
+      this.audio.retune(this.specimen);
     }
     const url = new URL(this.document.location.href);
     url.searchParams.set('seed', String(this.seed));
@@ -275,6 +271,9 @@ class PondApp {
     }
     const creature = this.world.creature;
     this.audio.updateDepth(creature.immersion(), creature.speed());
+    // Presence, not position: the simulation already decided how close the thing
+    // in the deep is, and this only turns that into a level.
+    this.audio.updatePresence(this.world.lurker.nearness);
     for (const ripple of this.world.audibleRipples) {
       if (ripple.age > 0 && !this.processedRipples.has(ripple)) {
         this.processedRipples.add(ripple);

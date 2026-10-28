@@ -166,7 +166,15 @@ async function boot() {
   window.HTMLCanvasElement.prototype.setPointerCapture = function setPointerCapture() {};
   window.HTMLCanvasElement.prototype.releasePointerCapture = function releasePointerCapture() {};
 
-  const audioCalls = { enables: 0, impacts: 0, phenomena: 0, depthUpdates: 0, startDrone: 0 };
+  const audioCalls = {
+    enables: 0,
+    impacts: 0,
+    phenomena: 0,
+    depthUpdates: 0,
+    retunes: 0,
+    lastSpecimen: null,
+    presences: []
+  };
   class StubAudio {
     constructor() {
       this.enabled = false;
@@ -181,12 +189,18 @@ async function boot() {
       this.enabled = false;
       return true;
     }
-    startDrone() {
-      audioCalls.startDrone += 1;
+    retune(specimen) {
+      audioCalls.retunes += 1;
+      audioCalls.lastSpecimen = specimen;
       this.drone = { oscillators: [1] };
+      return true;
     }
     updateDepth() {
       audioCalls.depthUpdates += 1;
+    }
+    updatePresence(nearness) {
+      audioCalls.presences.push(nearness);
+      return true;
     }
     playImpact() {
       audioCalls.impacts += 1;
@@ -367,6 +381,33 @@ await test('R generates a different specimen and updates the URL', async () => {
   assert(beforeName !== afterName || before !== after, 'no identity change on reroll');
 });
 
+/*
+ * The bed survives a reroll -- an oscillator cannot be restarted -- so the app
+ * has to ask the audio layer to move to the new specimen's key. It did not:
+ * `startDrone` refuses to build a second bed, so every specimen after the first
+ * swam in the previous one's key and every impact note came from its chord too.
+ */
+await test('a reroll moves the drone to the new specimen key', async () => {
+  const env = await bootApp();
+  env.canvas.dispatchEvent(new env.window.PointerEvent('pointerdown', { clientX: 300, clientY: 300, bubbles: true }));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert(env.audioCalls.retunes === 1, `expected one bed to be built, got ${env.audioCalls.retunes}`);
+  const firstSpecimen = env.audioCalls.lastSpecimen;
+  const firstSeed = env.app.seed;
+
+  env.window.document.dispatchEvent(new env.window.KeyboardEvent('keydown', { key: 'r', bubbles: true }));
+  assert(env.app.seed !== firstSeed, 'reroll did not change the seed');
+  assert(env.audioCalls.retunes === 2, `reroll retuned ${env.audioCalls.retunes - 1} times`);
+  assert(
+    env.audioCalls.lastSpecimen !== firstSpecimen,
+    'reroll retuned with the specimen that was already playing'
+  );
+  assert(
+    env.audioCalls.lastSpecimen.name === env.app.specimen.name,
+    `retuned for ${env.audioCalls.lastSpecimen.name}, the creature is ${env.app.specimen.name}`
+  );
+});
+
 await test('space toggles pause via the keyboard', async () => {
   const env = await bootApp();
   const runningBefore = env.app.running;
@@ -381,9 +422,17 @@ await test('audio is only enabled through the gesture path', async () => {
   env.canvas.dispatchEvent(new env.window.PointerEvent('pointerdown', { clientX: 300, clientY: 300, bubbles: true }));
   await new Promise((resolve) => setTimeout(resolve, 10));
   assert(env.audioCalls.enables === 1, `enable called ${env.audioCalls.enables} times`);
-  assert(env.audioCalls.startDrone === 1, `startDrone called ${env.audioCalls.startDrone} times`);
+  assert(env.audioCalls.retunes === 1, `retune called ${env.audioCalls.retunes} times`);
   step(env, 60);
   assert(env.audioCalls.depthUpdates > 0, 'depth never forwarded to audio');
+  // The lurker is only audible because the app forwards its nearness every
+  // pumped frame; nothing else connects the two, and the value the audio layer
+  // expects is a fraction, which is easy to get wrong and silent when wrong.
+  assert(env.audioCalls.presences.length > 0, 'presence never forwarded to audio');
+  assert(
+    env.audioCalls.presences.every((nearness) => Number.isFinite(nearness) && nearness >= 0 && nearness <= 1),
+    `presence forwarded a nearness outside 0-1: ${env.audioCalls.presences.slice(0, 4)}`
+  );
 });
 
 await test('every module the page loads exists on disk', async () => {

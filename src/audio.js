@@ -1,7 +1,7 @@
 /*
  * Procedural soundtrack for Flux Pond.
  *
- * Everything is synthesised: no samples, no network. Two ideas carry it.
+ * Everything is synthesised: no samples, no network. Three ideas carry it.
  *
  *  - The creature's own chord (from its seed) plays through a low-pass filter
  *    whose cutoff follows depth, so diving audibly darkens the timbre and
@@ -10,6 +10,9 @@
  *    speed. Because the physics decides when a mass crosses the surface, the
  *    rhythm is emergent: paddle and you get a pattern; rest and you get the
  *    drone alone.
+ *  - A sub-bass presence voice, pulsed by an LFO, follows the lurker's nearness.
+ *    It is the only channel that can warn you about something you are not looking
+ *    at, and at a distance its level is exactly zero rather than faint.
  *
  * The AudioContext is injected, so this module can be unit-tested with a stub
  * (see `tools/test-audio.mjs`) and never constructs audio hardware on import --
@@ -17,6 +20,18 @@
  */
 
 const VOICE_LIMIT = 8;
+
+/*
+ * The presence voice: how loud, and how fast it throbs, at the two ends of the
+ * lurker's nearness. `floor` is why a specimen at the surface hears nothing at
+ * all rather than a permanent hum -- below it the level is exactly zero.
+ */
+const PRESENCE = {
+  peak: 0.18,
+  idlePulse: 0.35,
+  huntPulse: 3.1,
+  floor: 0.06
+};
 
 class PondAudio {
   constructor(contextFactory) {
@@ -84,7 +99,7 @@ class PondAudio {
    */
   startDrone(specimen) {
     if (!this.enabled || this.drone !== null) {
-      return;
+      return false;
     }
     const context = this.context;
     const filter = context.createBiquadFilter();
@@ -110,7 +125,111 @@ class PondAudio {
       oscillator.start();
       oscillators.push(oscillator);
     }
-    this.drone = { filter, bed, oscillators, specimen };
+    /*
+     * The lurker, heard before it is seen: one sub-bass voice in the specimen's
+     * own key, pulsed by a slow LFO that speeds up and swells as it closes. This
+     * is the only warning that arrives when you are not looking into the dark --
+     * and you are usually not.
+     *
+     * Built with the bed rather than on demand, for the reason the bed is never
+     * stopped: `startDrone` refuses to build a second one, so a voice torn down
+     * could never be heard again. What moves is the level, and at zero nearness
+     * the voice is silent rather than absent.
+     */
+    const presence = context.createGain();
+    presence.gain.value = 0.0;
+    presence.connect(this.master);
+    const sub = context.createOscillator();
+    sub.type = 'sine';
+    sub.frequency.value = specimen.root / 2.0;
+    sub.connect(presence);
+    sub.start();
+    // Amplitude modulation rather than a filter sweep: an oscillator wired into
+    // a gain node's `gain` param sums with that node's own value, so half the
+    // level as the intrinsic value and half as the modulation depth swings the
+    // voice 0 -> peak -> 0 without the gain ever going negative.
+    const pulse = context.createOscillator();
+    pulse.type = 'sine';
+    pulse.frequency.value = PRESENCE.idlePulse;
+    const pulseDepth = context.createGain();
+    pulseDepth.gain.value = 0.0;
+    pulse.connect(pulseDepth);
+    pulseDepth.connect(presence.gain);
+    pulse.start();
+
+    this.drone = { filter, bed, oscillators, specimen, presence, sub, pulse, pulseDepth };
+    return true;
+  }
+
+  /*
+   * Put the bed in the key of the specimen that is now swimming: build it if
+   * there is none, glide the existing voices if there is.
+   *
+   * Glide rather than rebuild because an oscillator cannot be restarted, and a
+   * specimen that arrives by sliding into its own key is the right sound anyway.
+   * The cost of never tearing voices down is that the voicing count stays
+   * whatever the first specimen asked for, with the new chord cycled over it --
+   * specimens have four or five tones, so a bed of five playing a chord of four
+   * doubles one tone. `startDrone` alone left every specimen after the first
+   * swimming in the previous one's key, and every impact note with it.
+   */
+  retune(specimen) {
+    if (this.drone === null) {
+      return this.startDrone(specimen);
+    }
+    const frequencies = specimen.frequencies;
+    // All of it or none of it: a specimen whose chord is unusable must leave the
+    // bed where it is, because the drone's chord is also what the impact notes
+    // are drawn from, and half a retune is a NaN on an AudioParam.
+    if (!Array.isArray(frequencies) || frequencies.length === 0) {
+      return false;
+    }
+    for (const frequency of frequencies) {
+      if (!Number.isFinite(frequency) || frequency <= 0.0) {
+        return false;
+      }
+    }
+    const context = this.context;
+    for (let index = 0; index < this.drone.oscillators.length; index += 1) {
+      this.drone.oscillators[index].frequency.setTargetAtTime(
+        frequencies[index % frequencies.length],
+        context.currentTime,
+        0.15
+      );
+    }
+    if (Number.isFinite(specimen.root) && specimen.root > 0.0) {
+      this.drone.sub.frequency.setTargetAtTime(specimen.root / 2.0, context.currentTime, 0.15);
+    }
+    // Impact and phenomenon voices read the chord off the drone, so this is what
+    // stops a reroll from playing the old specimen's notes.
+    this.drone.specimen = specimen;
+    return true;
+  }
+
+  /*
+   * How close the thing in the deep is, on the World's 0-1 nearness. A level
+   * curve steeper than linear (1.6), so it stays below hearing until it is
+   * genuinely close and then arrives quickly, and a pulse rate that rises with
+   * it: distance is loud, proximity is a throb.
+   */
+  updatePresence(nearness) {
+    if (!this.enabled || this.drone === null) {
+      return false;
+    }
+    // Non-finite in, silence out. The one time this module let a NaN through to
+    // an AudioParam it took the animation loop down with it, and a lurker that
+    // cannot be located is not a reason to stop the water moving.
+    const near = Number.isFinite(nearness) ? Math.min(1.0, Math.max(0.0, nearness)) : 0.0;
+    const level = near < PRESENCE.floor ? 0.0 : PRESENCE.peak * Math.pow(near, 1.6);
+    const context = this.context;
+    this.drone.presence.gain.setTargetAtTime(level * 0.5, context.currentTime, 0.25);
+    this.drone.pulseDepth.gain.setTargetAtTime(level * 0.5, context.currentTime, 0.25);
+    this.drone.pulse.frequency.setTargetAtTime(
+      PRESENCE.idlePulse + (PRESENCE.huntPulse - PRESENCE.idlePulse) * near,
+      context.currentTime,
+      0.4
+    );
+    return true;
   }
 
   /*
@@ -230,4 +349,4 @@ function withFrequencies(specimen, noteFrequency) {
   return { ...specimen, root, frequencies };
 }
 
-export { PondAudio, withFrequencies, VOICE_LIMIT };
+export { PondAudio, withFrequencies, VOICE_LIMIT, PRESENCE };

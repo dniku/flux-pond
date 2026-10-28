@@ -8,9 +8,16 @@
  * spamming the pointer cannot start thousands of nodes per second.
  */
 import FluxPond from '../src/flux-pond.js';
-import { PondAudio, withFrequencies, VOICE_LIMIT } from '../src/audio.js';
+import { PondAudio, withFrequencies, VOICE_LIMIT, PRESENCE } from '../src/audio.js';
 
 const { makeSpecimen, noteFrequency } = FluxPond;
+
+/*
+ * The drone's own two presence voices: the sub-bass and the LFO that pulses it.
+ * Asserted against the total oscillator count rather than the chord alone, so a
+ * voice leaked per note still fails the leak check.
+ */
+const PRESENCE_VOICES = 2;
 
 let passed = 0;
 const failures = [];
@@ -158,15 +165,150 @@ await test('enable() then startDrone() starts one oscillator per chord tone, all
   const specimen = withFrequencies(makeSpecimen(3), noteFrequency);
   audio.startDrone(specimen);
   const droneVoices = specimen.chords.length;
+  // The chord, plus the two voices of the presence bed (the sub and the LFO that
+  // pulses it) -- and nothing else. Naming the presence voices rather than
+  // counting chords alone keeps this a leak check: the day a third voice appears
+  // per note, this fails.
   assert(
-    stub.nodes.oscillators.length === droneVoices,
-    `expected ${droneVoices} drone oscillators, got ${stub.nodes.oscillators.length}`
+    stub.nodes.oscillators.length === droneVoices + PRESENCE_VOICES,
+    `expected ${droneVoices + PRESENCE_VOICES} oscillators (${droneVoices} chord + ${PRESENCE_VOICES} presence), got ${stub.nodes.oscillators.length}`
   );
   assert(
     stub.nodes.oscillators.every((node) => node.started),
     'a drone oscillator was never started'
   );
+  // Driving it must not be another opportunity to leak a voice.
+  for (let i = 0; i < 200; i += 1) {
+    audio.updatePresence((i % 100) / 100);
+  }
+  assert(
+    stub.nodes.oscillators.length === droneVoices + PRESENCE_VOICES,
+    `updatePresence built new oscillators: ${stub.nodes.oscillators.length}`
+  );
   stub.nodes.oscillators.forEach((node) => node.stop());
+});
+
+/*
+ * A reroll cannot rebuild the bed -- an oscillator cannot be restarted -- so a
+ * new specimen has to retune the voices already running. There was no path at
+ * all before this: `startDrone` refuses a second bed, so specimen two swam in
+ * specimen one's key, and so did every impact note it made.
+ */
+await test('a new specimen retunes the bed that is already playing', async () => {
+  const { audio, stub } = audioWithStub();
+  await audio.enable();
+  const first = withFrequencies(makeSpecimen(3), noteFrequency);
+  const second = withFrequencies(makeSpecimen(42), noteFrequency);
+  audio.startDrone(first);
+  const built = stub.nodes.oscillators.length;
+  const chordVoices = audio.drone.oscillators;
+
+  assert(audio.retune(second) === true, 'retune refused a live bed');
+  assert(
+    stub.nodes.oscillators.length === built,
+    `retune built ${stub.nodes.oscillators.length - built} new voices instead of reusing ${built}`
+  );
+  for (const voice of chordVoices) {
+    const targets = voice.frequency.targets;
+    const target = targets[targets.length - 1];
+    assert(
+      second.frequencies.includes(target),
+      `a chord voice was left at ${target}, not in the new chord ${second.frequencies}`
+    );
+  }
+  const subTargets = audio.drone.sub.frequency.targets;
+  assert(
+    Math.abs(subTargets[subTargets.length - 1] - second.root / 2.0) < 1e-9,
+    `presence sub stayed at ${subTargets[subTargets.length - 1]} instead of ${second.root / 2.0}`
+  );
+
+  // The audible consequence: an impact after the reroll is pitched off the new
+  // specimen's chord, which is the part no visual check could ever have caught.
+  const voiceCount = stub.nodes.oscillators.length;
+  audio.playImpact({ strength: 0.5, waveIndex: 0 });
+  const impact = stub.nodes.oscillators[voiceCount];
+  assert(impact !== undefined, 'no impact voice was started');
+  assert(
+    Math.abs(impact.frequency.value - second.frequencies[0] * 2.0) < 1e-9,
+    `impact pitched ${impact.frequency.value}, expected ${second.frequencies[0] * 2.0} from the new specimen`
+  );
+});
+
+await test('retune builds a first bed, and refuses a specimen it cannot play', async () => {
+  const { audio, stub } = audioWithStub();
+  const specimen = withFrequencies(makeSpecimen(5), noteFrequency);
+  // Before a gesture there is no context to speak into.
+  assert(audio.retune(specimen) === false, 'retune built a bed before enable()');
+  assert(stub.nodes.oscillators.length === 0, 'retune touched the API before enable()');
+
+  await audio.enable();
+  assert(audio.retune(specimen) === true, 'retune did not build the first bed');
+  assert(stub.nodes.oscillators.length > 0, 'retune built nothing once enabled');
+  const playable = audio.drone.specimen;
+
+  for (const broken of [{ frequencies: [] }, { frequencies: [NaN, 220] }, { frequencies: [0] }, {}]) {
+    assert(audio.retune(broken) === false, `retune accepted ${JSON.stringify(broken)}`);
+  }
+  assert(audio.drone.specimen === playable, 'a refused retune still replaced the chord');
+});
+
+/*
+ * The presence voice is the only thing that warns you about the lurker when you
+ * are not looking into the dark, so what matters is the shape of the curve, not
+ * its existence: silent when the animal is nowhere near, monotonic as it
+ * closes, and loud enough to hear without swallowing the chord.
+ */
+await test('presence is silent at a distance and swells as the lurker closes', async () => {
+  const { audio } = audioWithStub();
+  await audio.enable();
+  audio.startDrone(withFrequencies(makeSpecimen(6), noteFrequency));
+  const levels = [];
+  const pulses = [];
+  for (const nearness of [0.0, 0.05, 0.2, 0.5, 0.8, 1.0]) {
+    audio.drone.presence.gain.targets.length = 0;
+    audio.drone.pulse.frequency.targets.length = 0;
+    audio.updatePresence(nearness);
+    levels.push(audio.drone.presence.gain.targets[0]);
+    pulses.push(audio.drone.pulse.frequency.targets[0]);
+  }
+  assert(levels[0] === 0.0, `a lurker 2.8 away produced level ${levels[0]}`);
+  assert(levels[1] === 0.0, `below the floor the voice should be exactly silent, got ${levels[1]}`);
+  for (let i = 2; i < levels.length; i += 1) {
+    assert(levels[i] > levels[i - 1], `presence did not swell from nearness ${i}: ${levels}`);
+  }
+  assert(
+    levels[levels.length - 1] <= PRESENCE.peak + 1e-9,
+    `presence peaks above its own ceiling: ${levels[levels.length - 1]}`
+  );
+  assert(
+    levels[levels.length - 1] > 0.05,
+    'presence never gets loud enough to hear over the bed'
+  );
+  for (let i = 1; i < pulses.length; i += 1) {
+    assert(pulses[i] > pulses[i - 1], `the pulse stopped quickening: ${pulses}`);
+  }
+  assert(
+    pulses[pulses.length - 1] < 12.0,
+    `the pulse rate is a buzz, not a throb: ${pulses[pulses.length - 1]} Hz`
+  );
+});
+
+await test('presence ignores a broken nearness instead of breaking the loop', async () => {
+  const { audio } = audioWithStub();
+  await audio.enable();
+  audio.startDrone(withFrequencies(makeSpecimen(9), noteFrequency));
+  for (const bad of [NaN, Infinity, -Infinity, undefined, null]) {
+    // The stub throws on a non-finite param, which is what a real browser does.
+    assert(audio.updatePresence(bad) === true, `updatePresence refused ${String(bad)}`);
+    const scheduled = audio.drone.presence.gain.targets;
+    assert(
+      scheduled[scheduled.length - 1] === 0.0,
+      `${String(bad)} reached the presence level as ${scheduled[scheduled.length - 1]}`
+    );
+  }
+  // And with no graph at all there is nothing to speak into.
+  const bare = new PondAudio(() => makeStubContext().context);
+  assert(bare.updatePresence(1.0) === false, 'presence spoke before audio was enabled');
 });
 
 await test('impact voices are rate-limited and bounded', async () => {
