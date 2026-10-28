@@ -102,11 +102,14 @@ const MEAN_DELTA_LIMIT = 1.5;
 const GOLDEN_FRAMES = [
   { name: 'idle-5s', seconds: 5.0, pull: false },
   { name: 'hunt-40s', seconds: 40.0, pull: false },
-  { name: 'tow-10s', seconds: 10.0, pull: true }
+  { name: 'tow-10s', seconds: 10.0, pull: true },
+  // The lurker is drawn from published state only, so it needs a frame of its
+  // own: the other three catch a silhouette in the distance at most.
+  { name: 'lurker-2s', seconds: 2.0, pull: true, press: true }
 ];
 
 async function captureStableFrame(page, frame) {
-  const readout = await page.evaluate(({ steps, pull }) => {
+  const readout = await page.evaluate(({ steps, pull, press }) => {
     const app = window.fluxPond.app;
     app.running = false;
     app.world.reset(app.seed);
@@ -122,7 +125,7 @@ async function captureStableFrame(page, frame) {
      * ~2.0 here, measured over 10 s.)
      */
     app.pointerInside = pull;
-    app.pressing = false;
+    app.pressing = press === true;
     for (let i = 0; i < steps; i += 1) {
       if (pull) {
         const centre = app.world.creature.centroid();
@@ -142,7 +145,7 @@ async function captureStableFrame(page, frame) {
       .map((badge) => badge.textContent)
       .join('+');
     return `${values.join(' ')} badges=${badges === '' ? 'none' : badges}`;
-  }, { steps: Math.round(frame.seconds * 120), pull: frame.pull });
+  }, { steps: Math.round(frame.seconds * 120), pull: frame.pull, press: frame.press === true });
   // One paint after the state is set, so the screenshot is that state.
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve())));
   const buffer = await page.screenshot({ path: path.join(OUT, `${frame.name}.png`) });
@@ -287,6 +290,9 @@ async function main() {
     // checks below assume a creature that has barely started.
     const app = window.fluxPond.app;
     app.pointerInside = false;
+    // A golden recorded under a press would otherwise leave the button down for
+    // every live check that follows.
+    app.pressing = false;
     app.world.setPointer({ active: false, attract: false, pressure: 0.0 });
     app.world.reset(app.seed);
     app.elapsed = 0.0;

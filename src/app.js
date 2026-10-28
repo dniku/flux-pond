@@ -349,6 +349,7 @@ class PondApp {
     this.setText('distance', metrics.distance.toFixed(1));
     this.setText('ripples', metrics.wakeEvents);
     this.setText('breaches', metrics.breachCount);
+    this.setText('flights', metrics.fleeCount);
     this.setText('fps', this.fps.toFixed(0));
 
     this.setMeter('speed', speed / 2.5);
