@@ -1,6 +1,6 @@
 # Flux Pond
 
-A procedurally generated buoyant creature in a shallow, stratified trench that you steer with cursor pressure — and a toy about one specific emergent thing: **a body floating at a waterline**. It also gets hungry, and has to dive into the plankton layer to eat, which is the difference between a balloon that bobs and an animal with somewhere to be.
+A procedurally generated buoyant creature in a shallow, stratified trench that you steer with cursor pressure — and a toy about one specific emergent thing: **a body floating at a waterline**. It also gets hungry, and has to dive into the plankton layer to eat, which is the difference between a balloon that bobs and an animal with somewhere to be — and below the plankton band something bigger is sitting in the dark, which is what turns somewhere to be into a decision.
 
 It is a closed loop of point masses joined by springs, with real Archimedes buoyancy, drag, a floor, and a surface height field that the creature itself disturbs. Nothing about the motion is animated: swimming, breaching, skimming, bouncing off the floor and the wake you leave behind are all consequences of the same force law. Every creature is derived from a seed, so `?seed=...` reproduces one exactly.
 
@@ -36,6 +36,7 @@ Audio is off until you click, because browsers forbid starting it before a gestu
 - **Shift-drag to the floor, then let go.** A body lighter than water and pressed against a floor rebounds, and `floor bounce` lights up (44 of them in 18 s of pulling). Hold the dive longer and the rebound on its own is fast enough to light `breach` — measured at 12 s down, 7 breaches from the release alone.
 - **Stay still.** After ~2 s the creature swims by itself, with a travelling wave along its body, and leaves a wake you did not cause. Watch a little longer and it turns nose-down and commits to the plankton layer; each bite is a note, and it shoots back up to the surface when it has had enough.
 - **Intercept a hunt.** Pull it off a feeding dive and let go — it picks the same mote back up. That is the whole loop of the thing: it has a goal you are interrupting, rather than a blob you are pushing.
+- **Take it down past the plankton and hold it there.** Below a lair depth that varies by seed (0.40–0.62) something is sitting in the dark, and it comes toward anything that lingers in its band: a hard 14 s dive spends 10.2 s inside its threat radius across 8 seeds and turns into 8 flights. You will see the eye well before then — a big dark fish with a lit back, and its eye glows as it notices you. It will not follow you up, so the way out is up, and a specimen frightened at depth breaches on its way.
 - **Compare the standing waves.** Move at a steady speed and the wake locks into a fixed pattern relative to you; stop, and the trench keeps sloshing.
 - **Roll a few seeds.** Specimens differ in silhouette, mass distribution, size, hue and musical key, which changes how they swim: a bulged forebody is heavy at the front and pitches nose-down when it slows.
 - **Watch the tail.** The eye sits at the thickest part of the body and its pupil turns with the drift; the caudal fin is anchored to four real outline masses at the other end, so it swings with the travelling wave rather than being animated separately. Neither is skinned or keyframed — when the body folds, they fold with it.
@@ -57,11 +58,13 @@ Four ideas worth knowing about, because they are where the behaviour comes from:
 
 **Ripples are caused by the creature.** A wave is injected only when a mass crosses the free surface, at an amplitude set by its crossing speed. There is no decorative wake.
 
-**Hunger moves the steering target; it does not add a force.** The idle creature already had one body-wide steering acceleration aimed at the surface. A hungry creature aims the same controller at the nearest mote and blends its heading toward it. One exception was unavoidable: a fully submerged body is accelerated upward at `gravity / floatTrim - gravity` = 8.5, so diving needs a term that cancels that excess buoyancy — which is what fins are for. Without it a hungry creature just bobbed and starved, measured at 0–3 bites in 120 s; with `diveThrust` cancelling the excess it manages ~15–20.
+**Hunger moves the steering target; it does not add a force.** The idle creature already had one body-wide steering acceleration aimed at the surface. A hungry creature aims the same controller at the nearest mote and blends its heading toward it. One exception was unavoidable: a fully submerged body is accelerated upward at `gravity / floatTrim - gravity` = 8.5, so diving needs a term that cancels that excess buoyancy — which is what fins are for. Without it a hungry creature just bobbed and starved, measured at 0–3 bites in 120 s; with `diveThrust` cancelling the excess it manages 11–13 (re-measured at 60 Hz and 120 Hz over seeds 42, 7, 145, 20261027).
+
+**Fear uses the same controller as hunger, and the lurker adds no force at all.** The thing in the deep has no springs, no buoyancy, no mass, no appetite and no way to be hurt. It is a position that homes slowly toward anything lingering below its lair, published to the World every substep, and all it is allowed to change is the *target*: the depth controller that aims at the surface is aimed just past it, the heading blends away, and the drive goes to full even while a cursor is holding the body — an animal being dangled should still want to leave. Kinematic rather than simulated also means it costs the solver nothing, and a replay puts it in the same place.
 
 **The plankton are generated, not stored.** The trench is endless, so each cell of world x hashes to up to three motes inside a seed-dependent band. Only two things are remembered — which motes have been grazed, and when they regrow — so swimming forever cannot grow the state, and any stretch of trench is reproducible from the seed alone.
 
-`WORLD` and `FOOD` at the top of `src/flux-pond.js` are the tuning surface; `PHENOMENA` below them holds the detection thresholds, and the comments say which of these numbers were measured rather than guessed.
+`WORLD` and `FOOD` at the top of `src/flux-pond.js` are the tuning surface; `PHENOMENA` holds the detection thresholds and `LURKER` the lair depth, the threat radius and how far above the lair the threat still counts. The comments say which of those numbers were measured rather than tasted, and what the measurement was.
 
 ## Checks
 
@@ -72,7 +75,7 @@ tools/check.sh --browser  # additionally drive the real page in headless Chromiu
 
 `tools/check.sh` needs Node, found on `PATH` or in the Nix store (`tools/toolchain.sh`). It runs `node --check` over every source file and then four test files:
 
-- `tests/sim.test.mjs` (35) — determinism, including a reset replay that has to match a first boot of the same seed to 1e-9, a 600-seed × 30 s stability sweep, hostile input, degenerate frame times, floating at the designed trim, floor impenetrability, area preservation, wake causality, surface-field advection and saturation, hysteresis of every phenomenon, audio helper maths. Plus: a new specimen starts **stress-free** (every spring's rest length equals the distance it was built at), the body still matches its built perimeter spacing after 12 s, the nose/tail are fixed material indices opposite each other, and the feeding layer — hunting deepens the creature compared with the same seed on an empty trench, hunger rises and a bite knocks it down, grazed motes stay gone until they regrow, the field is endless and identical across two runs of one seed, and the grazed-mote memory cannot grow without bound.
+- `tests/sim.test.mjs` (40) — determinism, including a reset replay that has to match a first boot of the same seed to 1e-9, a 600-seed × 30 s stability sweep, hostile input, degenerate frame times, floating at the designed trim, floor impenetrability, area preservation, wake causality, surface-field advection and saturation, hysteresis of every phenomenon, audio helper maths. Plus: a new specimen starts **stress-free** (every spring's rest length equals the distance it was built at), the body still matches its built perimeter spacing after 12 s, the nose/tail are fixed material indices opposite each other, and the feeding layer — hunting deepens the creature compared with the same seed on an empty trench, hunger rises and a bite knocks it down, grazed motes stay gone until they regrow, the field is endless and identical across two runs of one seed, and the grazed-mote memory cannot grow without bound. Five more cover the lurker: that it is a place and the same seed puts it in the same place; that lingering in the dark is noticed, that fear can fire while a cursor still holds the body, and that one flight counts as one event; that fear only exists in its own depth band; that it never rises off its lair; and that an animal left alone almost never meets it and keeps feeding.
 - `tests/render.test.mjs` (11) — renders through a recording 2D context across 120 seeds and degenerate viewport sizes, asserting no non-finite draw argument, no negative radius, balanced `save`/`restore`, and that the camera maps screen↔world space invertibly. Plus four on `creatureGeometry()`: finite at every viewport size, eye sized against the *projected* body, tail fin attached to real outline masses and pointing backwards, and the fin polygon free of self-intersections across 60 seeds.
 - `tests/audio.test.mjs` (8) — against a stub `AudioContext`, including an impact west of the origin where the wave index is negative: nothing is touched before a gesture, one oscillator per chord tone, voice budget respected under 500 impacts in an instant, filter cutoff stays audible across the depth range.
 - `tests/app.test.mjs` (11) — boots `index.html` verbatim in jsdom, checks that pressing swells the pointer field where hovering does not, and checks the app/marker agreement in both directions (no id the app reads is missing, no id the page declares is dead), that frames populate the read-out, that pointer input moves the creature and generates wake, that shift selects pull, that pause freezes and resumes, that audio only starts on a gesture, and that every module `index.html` loads resolves on disk (jsdom does not fetch `src=` modules, so a renamed file is a blank page nothing else would catch).
@@ -81,13 +84,14 @@ These found every real bug listed under *Verified* below.
 
 ### In a browser
 
-`tools/check.sh --browser` runs `tools/browser-check.mjs` through `tools/run-browser-check.sh`, which points Playwright at the Chromium in the Nix store and answers `https://fluxpond.test/**` from disk, so no socket is bound. Beyond the behavioural assertions it pins **three golden frames**, and logs the read-out of each so the image and the numbers can be checked against each other:
+`tools/check.sh --browser` runs `tools/browser-check.mjs` through `tools/run-browser-check.sh`, which points Playwright at the Chromium in the Nix store and answers `https://fluxpond.test/**` from disk, so no socket is bound. Beyond the behavioural assertions it pins **four golden frames**, and logs the read-out of each so the image and the numbers can be checked against each other:
 
 | frame | the state | what it is there to catch |
 | --- | --- | --- |
 | `idle-5s` | settled at the waterline, gliding | the default look, and every panel where it belongs |
 | `hunt-40s` | 40 s later: hunger 72 %, working the plankton band | the feeding layer, the depth tint, the `photic` label |
 | `tow-10s` | held for 10 s by a pull toward the floor | a submerged body, two badges lit at once, the cursor ring |
+| `lurker-2s` | 2 s of held press at full strength: depth 0.40, the lurker at arm's length, `fleeing` lit, `flights` 1 | the lurker at close range, and the counter that only the lurker moves |
 
 A frame is made deterministic by pausing the loop, resetting the world and advancing a fixed number of fixed steps, so an image depends on the seed and not on how long the machine took to paint, and the read-out is refreshed for the frame rather than left at whatever the last 500 ms window painted. Comparison tolerates 3 % of pixels moved and a mean channel delta of 1.5: a panel that moves or disappears is tens of thousands of pixels, a badge's 160 ms pop animation is half a per cent.
 
@@ -96,11 +100,11 @@ tools/recapture-golden.sh .tmp/review   # record frames somewhere for review
 tools/recapture-golden.sh               # ... and into tests/golden
 ```
 
-That script runs Chromium **twice** on purpose: the first session records, the second compares against what the first left. Frames that agree across two sessions — different wall clocks, different frame rates, different `requestAnimationFrame` timing — are pinned to the seed rather than to the machine's mood. On this host two sessions agree **to the pixel on all three frames**, and a third run moved 0.006 % of one: the fps digits, the only number on screen that describes the machine instead of the seed. The last real source of drift was in the renderer rather than the test — the cursor ring pulsed off `Date.now()`, which is why everything the painter draws now depends on simulated time alone — and the 3 % budget is left as tolerance for antialiasing on other machines.
+That script runs Chromium **twice** on purpose: the first session records, the second compares against what the first left. Frames that agree across two sessions — different wall clocks, different frame rates, different `requestAnimationFrame` timing — are pinned to the seed rather than to the machine's mood. On this host two sessions agree to within 0.023 % of pixels on all four frames — the residual is the fps and counter digits, and a third run moved 0.006 % of one: the fps digits, the only number on screen that describes the machine instead of the seed. The last real source of drift was in the renderer rather than the test — the cursor ring pulsed off `Date.now()`, which is why everything the painter draws now depends on simulated time alone — and the 3 % budget is left as tolerance for antialiasing on other machines.
 
 ## Verified
 
-Observed, on Node v24.20 with the current patch: **65 automated checks pass** (`tools/check.sh`) — 35 simulation, 11 render, 8 audio, 11 app — plus `node --check` on all 12 source/test/tool JS files. **And 25 checks pass in headless Chromium** (`tools/check.sh --browser`), on the real page over `https://`, including the three golden frames.
+Observed, on Node v24.20 with the current patch: **70 automated checks pass** (`tools/check.sh`) — 40 simulation, 11 render, 8 audio, 11 app — plus `node --check` on all 12 source/test/tool JS files. **And 26 checks pass in headless Chromium** (`tools/check.sh --browser`), on the real page over `https://`, including the four golden frames.
 
 Bugs found by those tests and fixed, each with a reproducing seed or input:
 
@@ -131,11 +135,11 @@ Two design corrections found by measurement rather than by a failing test: the b
 
 All six phenomena — `skimming`, `breach`, `skittering`, `gliding`, `sounding layer`, `floor bounce` — were observed to trigger across several seeds with a generic push/pull drive.
 
-Numbers behind the feeding layer, measured by running seeds idle for 120–150 s:
+Numbers behind the feeding layer, measured by running seeds idle for 120–150 s. The `after` column was re-measured for this revision and came in at 11–13 (the same at 60 Hz and 120 Hz, and 12–13 across eight seeds); an earlier version of this table claimed 15–21, which nothing reproduces now, and a stale number in a README is a bug like any other.
 
 | | before dive thrust | after |
 | --- | --- | --- |
-| bites per 120 s (seeds 42, 7, 145, 20261027) | 2, 0, 1, 3 | 15–21 |
+| bites per 120 s (seeds 42, 7, 145, 20261027) | 2, 0, 1, 3 | 11–13 |
 | mean wetted fraction idle | 0.45–0.46 | 0.47–0.80 (deep-band seeds wetter by design) |
 
 Two existing tests had to change, and both changes were the test encoding an old limitation rather than a regression:
@@ -145,13 +149,13 @@ Two existing tests had to change, and both changes were the test encoding an old
 
 ## What the browser settled, and what it did not
 
-Observed in headless Chromium (Playwright, `--use-gl=swiftshader`, 1024×640, `?seed=20261027`): the page loads over `https://` with no page or console errors for the whole session; the canvas is neither blank nor black (probed every 23×17 px, >10 distinct colours, mean luma above 4); the loop reports ~60 fps; cursor input moves the creature and raises wake events; the HUD follows; `Shift`-drag gets it below the surface; `R` rerolls the seed and rewrites the URL; a canvas gesture is what switches audio on, the audio button toggles state and label, and the graph builds (drone voices > 0) without an exception; the plankton layer is live; the three golden frames match. See bug 14 for the one thing every non-browser assertion was happy about.
+Observed in headless Chromium (Playwright, `--use-gl=swiftshader`, 1024×640, `?seed=20261027`): the page loads over `https://` with no page or console errors for the whole session; the canvas is neither blank nor black (probed every 23×17 px, >10 distinct colours, mean luma above 4); the loop reports ~60 fps; cursor input moves the creature and raises wake events; the HUD follows; `Shift`-drag gets it below the surface; `R` rerolls the seed and rewrites the URL; a canvas gesture is what switches audio on, the audio button toggles state and label, and the graph builds (drone voices > 0) without an exception; the plankton layer is live; the four golden frames match. See bug 14 for the one thing every non-browser assertion was happy about.
 
 Chromium needs escalated permission here: this container gives it no user namespace, so it runs `--no-sandbox`, and the browsers come out of the Nix store because nothing can be downloaded. The automated check answers requests through `page.route` from disk rather than binding a socket, so nothing in `tools/check.sh` goes through `serve.py` — it was verified separately, by binding it and requesting the page and its modules with `curl` (see *Run it*).
 
 Still needs a person rather than a harness:
 
-- **Whether it looks and feels good.** The goldens pin three instants. The motion, the colour balance, the `backdrop-filter` panels, and whether 60 fps survives real hardware (all of this was software-rasterised) are judgement calls, not assertions.
+- **Whether it looks and feels good.** The goldens pin four instants. The motion, the colour balance, the `backdrop-filter` panels, and whether 60 fps survives real hardware (all of this was software-rasterised) are judgement calls, not assertions.
 - **Whether it makes a sound.** Audio has been *constructed* in a real browser — nodes built, voices started and stopped, no exceptions — and validated against a stub elsewhere. Headless Chromium has no audio device, so nobody has heard it.
 - **Touch.** `touch-action: none` is set, everything routes through pointer events, and `pressing` comes from `pointerdown`, which fires for touch. All of that is an inference; no touch device has driven it.
 - **Hours rather than seconds.** 60 s of simulation runs headless with nothing adrift; longer has not been observed.
@@ -164,6 +168,8 @@ Still needs a person rather than a harness:
 - `SurfaceField` is a 1024-cell global height field with a fixed advection speed, so waves do not genuinely disperse; they translate and decay.
 - The 22-mass loop is coarse: fast specimens visibly polygonalise, and the area constraint is radial-about-centroid, which is wrong for strongly concave shapes (it is stable, just not exact).
 - No saving beyond the seed: phenomena history and metrics reset on reload.
+- The lurker is not an animal. It has no body, no appetite, and no way to be hurt, and it ignores the wake, the plankton and any other lurker: one per trench, placed by the seed, homing at a constant speed. That is enough to make the deep feel inhabited; it is not a predator to outwit.
+- Safety is absolute. It will not rise off its lair, so a specimen that reaches the light cannot be touched, which makes the risk a decision to abort rather than a threat to manage. The version where it can follow you in, or where it can be driven off, is not here.
 - The influence field is anchored in world space, so holding the cursor still lets the ring slide off the creature as the camera follows it. Deliberate — a field that snapped along with the camera would be feedback nobody could read — but it means steering by where you leave the cursor, not by where you point at the animal.
 - A press is a strong local gradient with no yield limit: hold one against the creature and the loop stretches, because the pointer force acts on each mass separately and the body resists area, not length (strain ~2.8 over 10 s at full press, against ~2.0 hovering).
 - The counters — travel, ripples, fed, breaches — are session totals and survive `R` on purpose, so after a reroll they describe the séance rather than the specimen.
@@ -171,13 +177,12 @@ Still needs a person rather than a harness:
 
 ## Next iteration
 
-**Put something at risk in the deep.** The feeding layer gave the creature a goal; the missing half is a reason to hesitate about it. Right now a dive is free, so it reads as a choreography rather than a decision. The smallest change that fixes that is a cost gradient with depth — the `sounding` and `abyss` strata slow the drive, chill the hunger relief, or hold something that bites back — so that the richest plankton sits where it is dangerous to eat it. That is one more term in the same steering blend, and it turns the strata from scenery into a risk/reward map the player can read off the creature's choices.
+**Make the cost a gradient, not a threshold.** The lurker made the deep somewhere you choose to go, but the cost is still binary: inside its band or out, and outside it the trench is free. The next step is a term that is always on — drive authority and bite relief falling off with depth, so the richest plankton is worth less and costs more even when nothing is watching. One more term in the same steering blend, and the strata become a risk/reward map readable with no animals in them at all.
 
 The versions of that idea, cheapest first:
 
 - **Condition, not just appetite.** Feeding accumulates into a body condition that shows as size and hue saturation, so a well-fed specimen is visibly fatter and rides higher — Archimedes doing the storytelling, since a bigger body changes the trim by itself.
 - **One competitor.** Two creatures already share the trench's surface field, so a second specimen hunting the same grazed-out patch is mostly free; they would not collide, which is its own follow-up.
-- **A depth tax.** Drive authority and bite relief fall off below a seed-dependent depth, so the deep band is a gamble rather than a buffet.
 - **Finish the music idea.** A dive that ends with a bite inside a given stratum could land on the beat and complete a bar; the note and the layer are both already known to the audio layer.
 
 Smaller options: pinch-to-scale influence radius on touch; a dorsal fin and gill flare, which need nothing new because `creatureGeometry()` is the only place a body part is defined; and adaptive substepping, so very fast specimens stay smooth without the clamps visibly squashing them.
