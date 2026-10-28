@@ -3,3 +3,6 @@
 
 # Runtime directory owned by whatever supervises this workspace.
 .run/
+
+# Bytecode from importing serve.py to test listen_target().
+__pycache__/
