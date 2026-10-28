@@ -36,7 +36,8 @@ const PHENOMENON_LABELS = {
   skitter: 'skittering',
   glide: 'gliding',
   dive: 'sounding layer',
-  bounce: 'floor bounce'
+  bounce: 'floor bounce',
+  flee: 'fleeing'
 };
 
 /*
