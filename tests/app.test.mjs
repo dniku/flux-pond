@@ -467,6 +467,35 @@ await test('every module the page loads exists on disk', async () => {
   assert(seen.size >= 5, `only reached ${seen.size} modules from index.html: ${[...seen].join(', ')}`);
 });
 
+/*
+ * The README is the front page of this repo and it embeds the golden frames, so
+ * a renamed frame is a wall of broken-image icons for everyone who visits. No
+ * other test reads the README; this is the whole contract.
+ */
+await test('every image the README links exists and is a PNG', async () => {
+  const readme = await readFile(path.join(root, 'README.md'), 'utf8');
+  const links = [...readme.matchAll(/!\[[^\]]*\]\(([^)]+)\)/g)]
+    .map((match) => match[1].trim())
+    .filter((target) => !/^https?:/.test(target));
+  assert(links.length >= 4, `expected the README to embed the frames, found ${links.length} local image(s)`);
+  const broken = [];
+  for (const link of links) {
+    let bytes;
+    try {
+      bytes = await readFile(path.resolve(root, link));
+    } catch {
+      broken.push(`${link} (missing)`);
+      continue;
+    }
+    // 0x89 'PNG' -- so a truncated file, or one replaced by an error page, fails
+    // here rather than as a slightly wrong-looking picture.
+    if (!bytes.subarray(0, 4).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47]))) {
+      broken.push(`${link} (not a PNG)`);
+    }
+  }
+  assert(broken.length === 0, `README images broken: ${broken.join(', ')}`);
+});
+
 process.stdout.write(JSON.stringify({ passed, failed: failures.length }) + '\n');
 for (const failure of failures) {
   process.stdout.write(`\nFAIL: ${failure.name}\n  ${failure.message}\n`);

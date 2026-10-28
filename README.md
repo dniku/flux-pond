@@ -4,6 +4,10 @@ A procedurally generated buoyant creature in a shallow, stratified trench that y
 
 It is a closed loop of point masses joined by springs, with real Archimedes buoyancy, drag, a floor, and a surface height field that the creature itself disturbs. Nothing about the motion is animated: swimming, breaching, skimming, bouncing off the floor and the wake you leave behind are all consequences of the same force law. Every creature is derived from a seed, so `?seed=...` reproduces one exactly.
 
+![A creature the colour of glacial ice, half out of the water at the surface of a dark trench, lit from above by shafts of sunlight. Below it and to the left, in the darker water, sits a much larger animal you have not met yet. The read-out at the left reports speed, depth, wetted fraction, strain, hunger, and how many it has eaten.](tests/golden/idle-5s.png)
+
+*Seed 20261027: a specimen at the waterline, and the lurker waiting below the plankton band. The image is the `idle-5s` golden frame the test suite pins, so this picture is the thing under test.*
+
 ## Run it
 
 ```bash
@@ -40,6 +44,10 @@ Audio is off until you click, because browsers forbid starting it before a gestu
 - **Compare the standing waves.** Move at a steady speed and the wake locks into a fixed pattern relative to you; stop, and the trench keeps sloshing.
 - **Roll a few seeds.** Specimens differ in silhouette, mass distribution, size, hue and musical key, which changes how they swim: a bulged forebody is heavy at the front and pitches nose-down when it slows.
 - **Watch the tail.** The eye sits at the thickest part of the body and its pupil turns with the drift; the caudal fin is anchored to four real outline masses at the other end, so it swings with the travelling wave rather than being animated separately. Neither is skinned or keyframed — when the body folds, they fold with it.
+
+![The lurker, cut out and doubled: a long dark body with its back catching what little light reaches this far down, a small amber eye with a lit ring around it, a dorsal fin half-furled, and a forked tail.](docs/lurker-near.png)
+
+*The same animal, cut out of the frame at the top of this page. It has no springs, no buoyancy, no mass and no way to be hurt — it is a place that homes slowly toward anything that lingers in its band, and all it can change is what the creature wants to do next.*
 
 ## How it works
 
@@ -93,18 +101,27 @@ These found every real bug listed under *Verified* below.
 | `tow-10s` | held for 10 s by a pull toward the floor | a submerged body, two badges lit at once, the cursor ring |
 | `lurker-2s` | 2 s of held press at full strength: depth 0.40, the lurker at arm's length, `fleeing` lit, `flights` 1 | the lurker at close range, and the counter that only the lurker moves |
 
+Three of the four, as recorded — `idle-5s` is the picture at the top of this page:
+
+![The same creature 40 s later, nose down toward the plankton band, hunger at 72 %](tests/golden/hunt-40s.png)
+![Held down by a pull toward the floor, stretched vertical, two phenomenon badges lit at once](tests/golden/tow-10s.png)
+![A held press at full strength: depth 0.40, the lurker close enough to fill the left of the frame, `fleeing` lit and one flight counted](tests/golden/lurker-2s.png)
+
 A frame is made deterministic by pausing the loop, resetting the world and advancing a fixed number of fixed steps, so an image depends on the seed and not on how long the machine took to paint, and the read-out is refreshed for the frame rather than left at whatever the last 500 ms window painted. Comparison tolerates 3 % of pixels moved and a mean channel delta of 1.5: a panel that moves or disappears is tens of thousands of pixels, a badge's 160 ms pop animation is half a per cent.
 
 ```bash
 tools/recapture-golden.sh .tmp/review   # record frames somewhere for review
 tools/recapture-golden.sh               # ... and into tests/golden
+tools/readme-graphics.sh                # regenerate docs/lurker-near.png from them
 ```
+
+The README links the golden frames themselves rather than keeping a second copy of the same pixels; `docs/lurker-near.png` is the one image it carries that is not a frame, a crop so the lurker is legible at GitHub's rendered width, and `tools/readme-graphics.sh` is how it is made.
 
 That script runs Chromium **twice** on purpose: the first session records, the second compares against what the first left. Frames that agree across two sessions — different wall clocks, different frame rates, different `requestAnimationFrame` timing — are pinned to the seed rather than to the machine's mood. On this host two sessions agree to within 0.023 % of pixels on all four frames — the residual is the fps and counter digits, and a third run moved 0.006 % of one: the fps digits, the only number on screen that describes the machine instead of the seed. The last real source of drift was in the renderer rather than the test — the cursor ring pulsed off `Date.now()`, which is why everything the painter draws now depends on simulated time alone — and the 3 % budget is left as tolerance for antialiasing on other machines.
 
 ## Verified
 
-Observed, on Node v24.20 with the current patch: **75 automated checks pass** (`tools/check.sh`) — 40 simulation, 11 render, 12 audio, 12 app — plus `node --check` on all 12 source/test/tool JS files. **And 26 checks pass in headless Chromium** (`tools/check.sh --browser`), on the real page over `https://`, including the four golden frames.
+Observed, on Node v24.20 with the current patch: **76 automated checks pass** (`tools/check.sh`) — 40 simulation, 11 render, 12 audio, 13 app — plus `node --check` on all 12 source/test/tool JS files. **And 26 checks pass in headless Chromium** (`tools/check.sh --browser`), on the real page over `https://`, including the four golden frames.
 
 Bugs found by those tests and fixed, each with a reproducing seed or input:
 
