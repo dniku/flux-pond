@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#030711">
+<title>Flux Pond</title>
+<!--
+  The markup, not the page. Everything in this file is hand-written; the
+  `index.html` at the root is generated from it plus a bundle of `src/*.js`, so
+  that one file opens anywhere. Edit this and run `node tools/build-standalone.mjs`.
+-->
+<style>
+  :root {
+    --ink: #e8f4ff;
+    --dim: #7d95ad;
+    --accent: #57e0d0;
+    --panel: rgba(8, 16, 28, 0.72);
+    /*
+     * How far the panels sit from the edge of the glass. On a phone these become
+     * the notch insets plus a margin, which is only worth doing once `cover` is in
+     * the viewport meta: without it every `env()` reads zero and the button bar
+     * lands under the home indicator, which is what a phone screenshot showed.
+     */
+    --edge-top: 14px;
+    --edge-left: 14px;
+    --edge-right: 14px;
+    --edge-bottom: 14px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; height: 100dvh; overflow: hidden; background: #030711; overscroll-behavior: none; }
+  body {
+    font: 13px/1.45 ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+    user-select: none;
+  }
+  #pond { position: fixed; inset: 0; display: block; width: 100%; height: 100%; touch-action: none; cursor: none; }
+
+  .panel {
+    position: fixed; background: var(--panel); border: 1px solid rgba(87, 224, 208, 0.22);
+    border-radius: 12px; padding: 12px 14px; backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+
+  #status { top: var(--edge-top); left: var(--edge-left); min-width: 208px; }
+  #status h1 { margin: 0 0 2px; font-size: 13px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); }
+  #species { color: var(--ink); font-size: 15px; letter-spacing: 0.02em; }
+  #seedline { color: var(--dim); font-size: 11px; margin-bottom: 10px; }
+
+  .meter { display: grid; grid-template-columns: 68px 1fr 44px; gap: 7px; align-items: center; margin: 3px 0; }
+  .meter span:first-child { color: var(--dim); }
+  .meter b { text-align: right; font-variant-numeric: tabular-nums; font-weight: 500; }
+  .track { height: 3px; background: rgba(255, 255, 255, 0.11); border-radius: 2px; overflow: hidden; }
+  .fill { height: 100%; width: 0%; background: var(--accent); transition: width 90ms linear; }
+  #depth-fill { background: #58a6ff; }
+  #strain-fill { background: #ff8f6b; }
+  #hunger-fill { background: #8ce28a; }
+
+  /* Not `.panel`s: no chrome of their own, but they still need the fixed
+     positioning that rule would have supplied, and without it both fell back to
+     static layout at the top-left of the document, under #status -- which made
+     the buttons unclickable and the phenomenon badges invisible. Found only by
+     a real browser hit-testing a click. */
+  #phenomena { position: fixed; top: var(--edge-top); right: var(--edge-right); display: flex; flex-direction: column; align-items: flex-end; gap: 6px; padding: 0; background: none; border: 0; backdrop-filter: none; }
+  .badge {
+    background: var(--panel); border: 1px solid rgba(87, 224, 208, 0.5); color: var(--accent);
+    border-radius: 999px; padding: 4px 11px; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;
+    animation: pop 160ms ease-out;
+  }
+  @keyframes pop { from { transform: scale(0.85); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+  #hint { bottom: var(--edge-bottom); left: var(--edge-left); max-width: 330px; color: var(--dim); }
+  #hint b { color: var(--ink); font-weight: 500; }
+  #hint kbd {
+    background: rgba(255, 255, 255, 0.09); border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 4px; padding: 0 5px; font: inherit; color: var(--ink);
+  }
+  #buttons { position: fixed; bottom: var(--edge-bottom); right: var(--edge-right); display: flex; gap: 8px; padding: 0; background: none; border: 0; backdrop-filter: none; }
+  button {
+    font: inherit; color: var(--ink); background: var(--panel); cursor: pointer;
+    border: 1px solid rgba(87, 224, 208, 0.3); border-radius: 10px; padding: 7px 13px;
+    transition: border-color 120ms, color 120ms;
+  }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  #toast {
+    top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; pointer-events: none;
+    font-size: 15px; letter-spacing: 0.06em; opacity: 0; transition: opacity 260ms;
+  }
+  #toast.show { opacity: 1; }
+  #fatal { display: none; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #ffb1a0; max-width: 520px; }
+  #fatal.show { display: block; }
+
+  button { min-height: 40px; touch-action: manipulation; }
+  /*
+   * A label longer than a thumb needs is shortened to its first word on a phone.
+   * Only static labels may use this: `#pause` and `#audio` have their whole text
+   * rewritten by app.js, so a span inside them would be erased on the first toggle.
+   */
+  .wide { display: inline; }
+  #noscript {
+    top: 50%; left: 50%; transform: translate(-50%, -50%); max-width: 420px;
+    text-align: center; color: #ffb1a0;
+  }
+  /* The pull button is a mode, not an action, so it shows which mode is on. */
+  button[aria-pressed="true"] {
+    border-color: var(--accent); color: var(--accent); background: rgba(87, 224, 208, 0.16);
+  }
+
+  #hint summary, #telemetry summary {
+    cursor: pointer; color: var(--accent); letter-spacing: 0.06em; list-style: none;
+  }
+  #hint summary::marker, #telemetry summary::marker { content: ''; }
+  #hint[open] summary, #telemetry[open] summary { margin-bottom: 6px; }
+
+  /*
+   * Phones, portrait and landscape: narrow *or* short, because 844x390 is a
+   * phone on its side and not a small desktop. The panels were positioned for a
+   * 1024x640 canvas; at 390px wide the button bar landed on top of the hint and
+   * the read-out covered half the trench. The meter bars go first -- they are
+   * decoration, the numbers are not. `app.js` opens and folds the disclosures on
+   * exactly this condition, inverted; the two must not disagree.
+   */
+  @media (max-width: 720px), (max-height: 520px) {
+    :root {
+      --edge-top: calc(8px + env(safe-area-inset-top, 0px));
+      --edge-left: calc(8px + env(safe-area-inset-left, 0px));
+      --edge-right: calc(8px + env(safe-area-inset-right, 0px));
+      --edge-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+    }
+    #status {
+      padding: 9px 11px; max-width: 58%;
+      max-height: calc(100dvh - var(--edge-top) - var(--edge-bottom));
+      overflow-y: auto;
+    }
+    #status h1 { font-size: 11px; }
+    #species { font-size: 13px; }
+    #seedline { font-size: 10px; margin-bottom: 6px; }
+    .meter { grid-template-columns: 1fr auto; gap: 10px; margin: 1px 0; font-size: 11px; }
+    .meter .track { display: none; }
+    #phenomena { right: var(--edge-right); }
+    .badge { font-size: 9px; padding: 3px 8px; }
+    #buttons {
+      left: var(--edge-left); right: var(--edge-right);
+      justify-content: center; flex-wrap: nowrap;
+    }
+    #buttons button { flex: 1 1 0; min-width: 0; min-height: 44px; padding: 10px 4px; font-size: 12px; }
+    .wide { display: none; }
+    /* One row of 44px buttons, plus the gap the hint keeps clear of it. */
+    #hint {
+      left: var(--edge-left); right: var(--edge-right);
+      bottom: calc(var(--edge-bottom) + 56px); max-width: none; font-size: 12px;
+    }
+    #toast { font-size: 13px; max-width: 84%; }
+  }
+</style>
+</head>
+<body>
+<canvas id="pond" aria-label="Flux Pond: a buoyant creature in a stratified fluid"></canvas>
+
+<div id="status" class="panel">
+  <h1>Flux Pond</h1>
+  <div id="species">&mdash;</div>
+  <div id="seedline">seed <span id="seed">&hellip;</span> &middot; <span id="layer">&hellip;</span></div>
+
+  <div class="meter"><span>speed</span><div class="track"><div class="fill" id="speed-fill"></div></div><b id="speed">0.00</b></div>
+  <div class="meter"><span>depth</span><div class="track"><div class="fill" id="depth-fill"></div></div><b id="depth">0.00</b></div>
+  <div class="meter"><span>hunger</span><div class="track"><div class="fill" id="hunger-fill"></div></div><b id="hunger">0%</b></div>
+
+  <!-- Eight counters nobody reads while a finger is in the way. app.js writes
+     them whether or not they are on screen, so the numbers stay true. -->
+  <details id="telemetry">
+    <summary>more</summary>
+    <div class="meter"><span>wetted</span><div class="track"><div class="fill" id="wet-fill"></div></div><b id="wet">0%</b></div>
+    <div class="meter"><span>strain</span><div class="track"><div class="fill" id="strain-fill"></div></div><b id="strain">0.00</b></div>
+    <div class="meter"><span>travel</span><div class="track"><div class="fill" id="distance-fill"></div></div><b id="distance">0.0</b></div>
+    <div class="meter"><span>ripples</span><div class="track"></div><b id="ripples">0</b></div>
+    <div class="meter"><span>fed</span><div class="track"></div><b id="fed">0</b></div>
+    <div class="meter"><span>breaches</span><div class="track"></div><b id="breaches">0</b></div>
+    <div class="meter"><span>flights</span><div class="track"></div><b id="flights">0</b></div>
+    <div class="meter"><span>fps</span><div class="track"></div><b id="fps">60</b></div>
+  </details>
+</div>
+
+<div id="phenomena"></div>
+<details id="hint" class="panel">
+  <summary>how do I drive it?</summary>
+  <div>
+    <b>Drag</b> to push the creature, <b>hold</b> to push harder, <b>Pull</b> (or <b>Shift</b>, or right-drag) to haul it down.
+    Dive it to the floor and it bounces &mdash; and something down there will notice.
+    <br>Leave it alone: it gets hungry and goes down to the plankton layer to graze.
+    <br><kbd>R</kbd> new specimen &nbsp; <kbd>Space</kbd> pause &nbsp; <kbd>A</kbd> audio &nbsp; <kbd>P</kbd> pull &nbsp; <kbd>H</kbd> hide this
+  </div>
+</details>
+<div id="buttons">
+  <button id="pull" type="button" aria-pressed="false">Pull</button>
+  <button id="reroll" type="button">New<span class="wide"> specimen</span></button>
+  <button id="pause" type="button">Pause</button>
+  <button id="audio" type="button">Audio off</button>
+  <button id="full" type="button">Full<span class="wide"> screen</span></button>
+</div>
+<noscript><div id="noscript" class="panel">
+  Flux Pond needs JavaScript and this frame is not running it, so the trench
+  below is only the read-out. Open the page in a browser tab; if you opened the
+  single file, the file is intact and it is the viewer that is blocking scripts.
+</div></noscript>
+<div id="toast" class="panel"></div>
+<div id="fatal" class="panel"></div>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>

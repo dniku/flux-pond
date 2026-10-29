@@ -689,12 +689,12 @@ async function main() {
   }
 
   /*
-   * The single file, opened the way a preview pane opens it: from disk, with no
-   * origin to fetch modules against. index.html cannot survive this -- the
-   * browser refuses the import and paints its panels over a black canvas -- so
-   * flux-pond.html exists, and this is the check that it still does.
+   * The page opened the way a chat attachment or a double-click opens it: from
+   * disk, with no origin to fetch modules against. The bundle is inlined, so
+   * there is nothing to fetch -- which is the whole reason the page at the root
+   * of this repo is a generated one.
    */
-  console.log('\n--- flux-pond.html from file:// ---');
+  console.log('\n--- index.html from file:// ---');
   const solo = await browser.newPage();
   const soloErrors = [];
   solo.on('pageerror', (error) => soloErrors.push(String(error)));
@@ -705,7 +705,7 @@ async function main() {
   });
   let soloBooted = true;
   try {
-    await solo.goto(`file://${path.join(root, 'flux-pond.html')}`, { waitUntil: 'load' });
+    await solo.goto(`file://${path.join(root, 'index.html')}`, { waitUntil: 'load' });
     await solo.waitForFunction(() => window.fluxPond !== undefined, { timeout: 10000 });
   } catch (error) {
     soloBooted = false;
@@ -738,11 +738,11 @@ async function main() {
   /*
    * The preview-pane shape, which is what Paseo does with a linked HTML file:
    * the markup goes into a frame with an opaque origin, so there is no base URL
-   * to resolve a module against. index.html paints its panels over a black
-   * canvas there -- the screenshot that started this -- and flux-pond.html has
-   * nothing left to fetch. Both halves are asserted: the broken shape is the
-   * reason the second file exists, and if it ever stopped being broken the file
-   * would be a candidate for deletion.
+   * to resolve a module against. This is the shape that broke the toy first: a
+   * page that imports its modules paints its panels over a black canvas here,
+   * which reads as a broken game rather than a blocked request. The generated
+   * page inlines them and needs nothing, and this is the check that it still
+   * does not need a server.
    */
   console.log('\n--- an opaque-origin preview frame (srcdoc) ---');
   const previewPage = await browser.newPage();
@@ -773,20 +773,7 @@ async function main() {
     return frames.length === 0 ? null : frames[frames.length - 1];
   }
 
-  const modulePage = await openInPreviewFrame('index.html');
-  const moduleBooted =
-    modulePage !== null &&
-    (await modulePage.evaluate(() => window.fluxPond !== undefined).catch(() => false));
-  check(
-    'index.html does NOT boot in a preview frame (the reason flux-pond.html exists)',
-    moduleBooted === false,
-    'index.html booted without a base URL -- the single-file build may no longer be needed'
-  );
-
-  // Errors are counted per file: index.html failing to import its modules is
-  // the expected result above, not something the single file should answer for.
-  previewErrors.length = 0;
-  const soloFrame = await openInPreviewFrame('flux-pond.html');
+  const soloFrame = await openInPreviewFrame('index.html');
   check('the preview frame accepted the single file', soloFrame !== null, 'no frame to look inside');
   if (soloFrame !== null) {
     let frameBooted = true;

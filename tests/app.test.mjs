@@ -436,11 +436,13 @@ await test('audio is only enabled through the gesture path', async () => {
 });
 
 await test('every module the page loads exists on disk', async () => {
-  // jsdom never fetches `<script type="module" src=...>`, so a renamed or
-  // missing file passes every other test in this file and yields a completely
-  // blank page in a real browser. Walk the graph the way the browser would.
-  const pageModules = [...html.matchAll(/<script[^>]*\bsrc="([^"]+)"/g)].map((match) => match[1]);
-  const queue = pageModules.map((specifier) => ({ from: 'index.html', specifier, base: root }));
+  // Walked from the markup rather than the page: `index.html` has the bundle
+  // inlined, so only `src/page.html` still names the entry the way a browser
+  // would read it. A renamed or missing module passes every other test in this
+  // file and yields a completely blank page.
+  const markup = await readFile(path.join(root, 'src/page.html'), 'utf8');
+  const pageModules = [...markup.matchAll(/<script[^>]*\bsrc="([^"]+)"/g)].map((match) => match[1]);
+  const queue = pageModules.map((specifier) => ({ from: 'src/page.html', specifier, base: root }));
   const seen = new Set();
   const missing = [];
   while (queue.length > 0) {
@@ -464,7 +466,7 @@ await test('every module the page loads exists on disk', async () => {
   assert(missing.length === 0, `unresolvable modules: ${missing.join(', ')}`);
   // The five app modules; fewer means the walk stopped early rather than that
   // the app got smaller.
-  assert(seen.size >= 5, `only reached ${seen.size} modules from index.html: ${[...seen].join(', ')}`);
+  assert(seen.size >= 5, `only reached ${seen.size} modules from src/page.html: ${[...seen].join(', ')}`);
 });
 
 /*
@@ -653,9 +655,11 @@ await test('a browser with no audio reports it and carries on', async () => {
 });
 
 /*
- * flux-pond.html is what a preview pane opens -- the one file that boots when
- * nothing can be fetched. A stale bundle is a file that works but shows old
- * behaviour, which is the worst kind of artifact to trust.
+ * `index.html` is generated: the page at the root is src/page.html plus the
+ * bundle of src/*.js, so that one file opens from disk, from a preview pane, or
+ * from a server. A stale build is a file that works but shows old behaviour,
+ * which is the worst kind of artifact to trust -- hence rebuilding it here and
+ * comparing bytes rather than a timestamp.
  */
 await test('the standalone single-file build is up to date', async () => {
   const { renderStandalone } = await import(path.join(root, 'tools/build-standalone.mjs'));
@@ -669,10 +673,10 @@ await test('the standalone single-file build is up to date', async () => {
     }
     throw error;
   }
-  const committed = await readFile(path.join(root, 'flux-pond.html'), 'utf8');
+  const committed = await readFile(path.join(root, 'index.html'), 'utf8');
   assert(
     committed === expected,
-    `flux-pond.html is stale (${expected.length} B expected, ${committed.length} B committed) -- run node tools/build-standalone.mjs`
+    `index.html is stale (${expected.length} B expected, ${committed.length} B committed) -- run node tools/build-standalone.mjs`
   );
   // The point of the file is that it fetches nothing: no script tag with an
   // src, no relative import left in the inlined bundle.

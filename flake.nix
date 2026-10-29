@@ -37,8 +37,8 @@
 
       # Syntax, then the four test files that need no browser: the physics, the
       # recording render context, the stubbed audio graph, and the jsdom boot of
-      # index.html. That last one rebuilds flux-pond.html and compares bytes, so
-      # a stale single file fails here rather than in a preview pane.
+      # index.html. That last one rebuilds index.html from src/ and compares
+      # bytes, so a stale page fails here rather than in a preview pane.
       tests = pkgs.runCommand "flux-pond-tests"
         {
           nativeBuildInputs = [ pkgs.nodejs ];
@@ -50,7 +50,6 @@
               ./tests
               ./tools
               ./index.html
-              ./flux-pond.html
               # A test walks the images the README links and decodes each one, so
               # the README and the pictures it points at are part of what the
               # checks cover, not prose beside the code.

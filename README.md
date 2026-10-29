@@ -12,25 +12,25 @@ It is a closed loop of point masses joined by springs, with real Archimedes buoy
 
 ## Run it
 
-```bash
-python3 serve.py
-```
+Open `index.html` — double-click it, drag it into a browser, link it into a chat, or serve the folder and use the URL. It is one file with the script inlined, so it asks for nothing else and fetches nothing at runtime: no fonts, libraries, samples or images. `?seed=20261027` reproduces one specimen exactly; with no seed it invents one and puts it in the URL.
 
-then open <http://127.0.0.1:8000/>.
-
-ES modules are loaded over `http://`, so opening `index.html` with `file://` will not work — the browser refuses the imports. Any static server is fine (`python3 -m http.server 8000`); `serve.py` sets the MIME types that make a wrong one a blank page, and prints the URL. `PORT=8123 python3 serve.py` changes the port. Verified: `/` comes back `200 text/html`, `src/main.js` and `src/flux-pond.js` come back `200 text/javascript`, and a missing path 404s.
-
-No build step, no dependencies, no network access at runtime: no fonts, libraries, samples or images are fetched. The port comes from the environment: `PORT=8123 python3 serve.py`, or `HOST`/`PASEO_PORT`, which is what a Paseo daemon injects when it starts this as a workspace service script and allocates the port itself.
-
-### In a preview pane, or on a phone
-
-`flux-pond.html` is the whole toy in one file — 52 KB, the script inlined, nothing fetched — for the ways of opening this project that cannot ask for `src/*.js`. A chat preview pane that injects markup into a sandboxed frame has no base URL to resolve a module against, and `file://` refuses the import outright; both paint `index.html`'s panels over a black canvas, which looks like a broken toy rather than a blocked request. Observed: exactly that, in a phone preview pane, with the seed read-out still showing its `…` placeholder.
+Serving it is optional. `serve.py` is there when you would rather have a URL:
 
 ```bash
-node tools/build-standalone.mjs   # regenerate flux-pond.html from index.html + src/
+python3 serve.py     # prints http://127.0.0.1:8000/
 ```
 
-Open it from disk, link it into a chat, or serve the folder and use `/flux-pond.html`. It is generated, and a test rebuilds it and compares bytes, so a stale copy fails the suite rather than quietly showing old behaviour.
+Any static server works (`python3 -m http.server 8000`); `serve.py` sets the MIME types that make a wrong one a blank page, and takes its bind address from the environment — `PORT=8123`, or `HOST`/`PASEO_PORT`, which is what a Paseo daemon injects when it runs this as a workspace service and allocates the port itself.
+
+### Why the page at the root is generated
+
+```bash
+node tools/build-standalone.mjs   # src/page.html + src/*.js -> index.html
+```
+
+The ways of opening this project do not agree about what they are allowed to fetch. `file://` refuses module imports outright, and a preview pane that injects markup into a sandboxed frame has no base URL to resolve a module against; a page that imports its modules paints its panels over a black canvas in both, which reads as a broken toy rather than a blocked request. Observed exactly that on a phone, with the seed read-out still showing its `…` placeholder — which is why the bundle is inlined into the one file you open, rather than a second file beside it that works in the places the first does not.
+
+It is generated, and a test rebuilds it and compares bytes, so a stale `index.html` fails the suite rather than quietly showing old behaviour. `src/` is the source of truth: `src/page.html` is the markup, `src/flux-pond.js` the simulation, `src/render.js`, `src/audio.js`, `src/app.js` and `src/main.js` the rest.
 
 ## Controls
 
@@ -155,7 +155,7 @@ That script runs Chromium **twice** on purpose: the first session records, the s
 
 Then the phone shapes. Everything a finger has to reach is hit-tested at 390x844, 360x760 and 844x390 landscape: no control under another panel, nothing off the glass, nothing smaller than 44 px, and both disclosures folded. Landscape is where this caught a real bug (17 below).
 
-Then the two files against the shape a preview pane makes — markup injected into an `allow-scripts` frame with an opaque origin, no base URL. `index.html` does not boot there (asserted, not assumed: if it ever did, `flux-pond.html` would be a candidate for deletion); `flux-pond.html` boots, paints the trench, and rerolls a specimen even though that frame refuses the history write the desktop page uses to put the seed in the URL. The same file is also opened from `file://` in a second context, where it needs no requests at all.
+Then the same page against the two shapes that cannot fetch: markup injected into an `allow-scripts` frame with an opaque origin and no base URL, and the file opened from `file://` in a second context. It boots, paints the trench and rerolls in both, and rerolling there succeeds even though that frame refuses the history write the desktop page uses to put the seed in the URL.
 
 ### In CI
 
@@ -170,9 +170,9 @@ The browser job uploads `.tmp/shots` when it fails. A runner that paints differe
 
 ## Verified
 
-Observed, on Node v24.20 with the current patch: **82 automated checks pass** (`tools/check.sh`) — 40 simulation, 11 render, 12 audio, 19 app — plus `node --check` on all 13 source/test/tool JS files. **And 64 checks pass in headless Chromium** (`tools/check.sh --browser`): on the real page over `https://` including the five golden frames, three phone viewport layouts, the single file opened from `file://`, and the single file opened in an opaque-origin preview frame.
+Observed, on Node v24.20 with the current patch: **82 automated checks pass** (`tools/check.sh`) — 40 simulation, 11 render, 12 audio, 19 app — plus `node --check` on all 13 source/test/tool JS files. **And 63 checks pass in headless Chromium** (`tools/check.sh --browser`): on the real page over `https://` including the five golden frames, three phone viewport layouts, the single file opened from `file://`, and the single file opened in an opaque-origin preview frame.
 
-The same 82 and 64 hold under the flake, on a toolchain other than the one that recorded them — observed here with `nix flake check` on node 24.21.0, and with `nix develop --command bash tools/check.sh --browser` on playwright-core 1.63.0 with Chromium build 1243, against goldens recorded on Playwright 1.58.2 with Chromium build 1248. Five golden comparisons, none of them written, worst margin 0.097 % of pixels moved (`tow-10s`) against a 3 % budget. The two CI guards were exercised too: with `CI=true` and an empty golden directory the browser check exits 1 with five named failures and writes no reference frames at all.
+The same 82 and 63 hold under the flake, on a toolchain other than the one that recorded them — observed here with `nix flake check` on node 24.21.0, and with `nix develop --command bash tools/check.sh --browser` on playwright-core 1.63.0 with Chromium build 1243, against goldens recorded on Playwright 1.58.2 with Chromium build 1248. Five golden comparisons, none of them written, worst margin 0.097 % of pixels moved (`tow-10s`) against a 3 % budget. The two CI guards were exercised too: with `CI=true` and an empty golden directory the browser check exits 1 with five named failures and writes no reference frames at all.
 
 
 Bugs found by those tests and fixed, each with a reproducing seed or input:
@@ -223,7 +223,7 @@ Two existing tests had to change, and both changes were the test encoding an old
 
 Observed in headless Chromium (Playwright, `--use-gl=swiftshader`, 1024×640, `?seed=20261027`): the page loads over `https://` with no page or console errors for the whole session; the canvas is neither blank nor black (probed every 23×17 px, >10 distinct colours, mean luma above 4); the loop reports ~60 fps; cursor input moves the creature and raises wake events; the HUD follows; `Shift`-drag gets it below the surface; `R` rerolls the seed and rewrites the URL; a canvas gesture is what switches audio on, the audio button toggles state and label, and the graph builds (drone voices > 0) without an exception; the plankton layer is live; the four golden frames match. See bug 14 for the one thing every non-browser assertion was happy about.
 
-Added with the phone pass, also observed in headless Chromium: at 390x844, 360x760 and 844x390 nothing a finger needs is under another panel, off the glass, or smaller than 44 px, and both disclosures come up folded; a real tap on Pull flips the field into attract mode and lights `aria-pressed`; a real tap on Full is granted by the browser and the button follows it, and the assertion is that the two agree rather than that fullscreen happened, because a phone browser is allowed to refuse. In an opaque-origin frame — the preview-pane shape — `index.html` shows its panels over an unpainted canvas while `flux-pond.html` runs, and rerolling there still swaps the specimen with the history write refused.
+Added with the phone pass, also observed in headless Chromium: at 390x844, 360x760 and 844x390 nothing a finger needs is under another panel, off the glass, or smaller than 44 px, and both disclosures come up folded; a real tap on Pull flips the field into attract mode and lights `aria-pressed`; a real tap on Full is granted by the browser and the button follows it, and the assertion is that the two agree rather than that fullscreen happened, because a phone browser is allowed to refuse. In an opaque-origin frame — the preview-pane shape — a page that imports its modules showed its panels over an unpainted canvas and never started; that screenshot is what made the page a single file, and the same frame now runs it, with rerolling still swapping the specimen even though the frame refuses the history write the desktop page uses to put the seed in the URL.
 
 Chromium needs escalated permission here: this container gives it no user namespace, so it runs `--no-sandbox`, and the browsers come out of the Nix store because nothing can be downloaded. The automated check answers requests through `page.route` from disk rather than binding a socket, so nothing in `tools/check.sh` goes through `serve.py` — it was verified separately, by binding it and requesting the page and its modules with `curl` (see *Run it*).
 
@@ -239,7 +239,7 @@ Still needs a person rather than a harness:
 
 - **No real phone has driven this.** The phone layout is verified in emulated viewports (Chromium `isMobile` + `hasTouch`, three sizes, portrait and landscape), where safe-area insets read zero — so the notch and home-indicator maths is unexercised and only its syntax is checked. What is verified is that the layout does not overlap or clip, that taps register, and that the full-screen request is accepted and reported.
 - **A viewer that blocks scripts entirely cannot run the toy at any file size.** The page now says so in a `<noscript>` block instead of showing a silent black rectangle, which is the most any file can do about it.
-- **`flux-pond.html` is generated.** Edit `index.html` and `src/`, then `node tools/build-standalone.mjs`; editing the generated file directly is a file that survives until the next build.
+- **`index.html` is generated.** Edit `src/` and run `node tools/build-standalone.mjs`. Editing the generated page directly survives until the next build, and until then the staleness test fails — which is the only reason it is a safe thing to commit.
 - The plankton do not swim, swarm, or react to the wake — they bob in place and are eaten. Nothing eats the creature, and hunger has no consequence beyond steering: it cannot starve, and it cannot die.
 - The water is deliberately at rest and the trench has no walls: there is no shoreline, and the camera scrolls forever.
 - `SurfaceField` is a 1024-cell global height field with a fixed advection speed, so waves do not genuinely disperse; they translate and decay.
