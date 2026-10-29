@@ -1,5 +1,7 @@
 # Flux Pond
 
+[![CI](https://github.com/dniku/flux-pond/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dniku/flux-pond/actions/workflows/ci.yml)
+
 A procedurally generated buoyant creature in a shallow, stratified trench that you steer with cursor pressure — and a toy about one specific emergent thing: **a body floating at a waterline**. It also gets hungry, and has to dive into the plankton layer to eat, which is the difference between a balloon that bobs and an animal with somewhere to be — and below the plankton band something bigger is sitting in the dark, which is what turns somewhere to be into a decision.
 
 It is a closed loop of point masses joined by springs, with real Archimedes buoyancy, drag, a floor, and a surface height field that the creature itself disturbs. Nothing about the motion is animated: swimming, breaching, skimming, bouncing off the floor and the wake you leave behind are all consequences of the same force law. Every creature is derived from a seed, so `?seed=...` reproduces one exactly.
@@ -96,23 +98,34 @@ Four ideas worth knowing about, because they are where the behaviour comes from:
 
 ## Checks
 
+The flake is the supported way to get a toolchain, and CI runs exactly these two commands:
+
+```bash
+nix flake check                                     # syntax + all automated tests
+nix develop --command bash tools/check.sh --browser # ... plus the real page in Chromium
+```
+
+`flake.nix` pins nixpkgs `5e867b1db0f219e0e906574cca1175f421a87834` and provides node 24, Playwright and Chromium. jsdom, pngjs and esbuild are the three Node libraries the checks import that nixpkgs does not carry, so they come from npm against `package-lock.json` via `importNpmLock`, whose integrity fields are the check; nothing is fetched while a check runs. The dev shell exports `NODE_PATH`, `PLAYWRIGHT_ENTRY` and `PLAYWRIGHT_BROWSERS_PATH` for that pinned set, and `tools/run-browser-check.sh` takes them from the environment instead of guessing: it searches the store only when nothing was exported, and never overwrites what the shell handed it.
+
+The scripts also run bare, and find Node on `PATH` or in the store (`tools/toolchain.sh`):
+
 ```bash
 tools/check.sh            # syntax + all automated tests (~40 s, the stability sweeps dominate)
 tools/check.sh --browser  # additionally drive the real page in headless Chromium
 ```
 
-`tools/check.sh` needs Node, found on `PATH` or in the Nix store (`tools/toolchain.sh`). It runs `node --check` over every source file and then four test files:
+It runs `node --check` over every source file and then four test files:
 
 - `tests/sim.test.mjs` (40) — determinism, including a reset replay that has to match a first boot of the same seed to 1e-9, a 600-seed × 30 s stability sweep, hostile input, degenerate frame times, floating at the designed trim, floor impenetrability, area preservation, wake causality, surface-field advection and saturation, hysteresis of every phenomenon, audio helper maths. Plus: a new specimen starts **stress-free** (every spring's rest length equals the distance it was built at), the body still matches its built perimeter spacing after 12 s, the nose/tail are fixed material indices opposite each other, and the feeding layer — hunting deepens the creature compared with the same seed on an empty trench, hunger rises and a bite knocks it down, grazed motes stay gone until they regrow, the field is endless and identical across two runs of one seed, and the grazed-mote memory cannot grow without bound. Five more cover the lurker: that it is a place and the same seed puts it in the same place; that lingering in the dark is noticed, that fear can fire while a cursor still holds the body, and that one flight counts as one event; that fear only exists in its own depth band; that it never rises off its lair; and that an animal left alone almost never meets it and keeps feeding.
 - `tests/render.test.mjs` (11) — renders through a recording 2D context across 120 seeds and degenerate viewport sizes, asserting no non-finite draw argument, no negative radius, balanced `save`/`restore`, and that the camera maps screen↔world space invertibly. Plus four on `creatureGeometry()`: finite at every viewport size, eye sized against the *projected* body, tail fin attached to real outline masses and pointing backwards, and the fin polygon free of self-intersections across 60 seeds.
 - `tests/audio.test.mjs` (12) — against a stub `AudioContext`, including an impact west of the origin where the wave index is negative: nothing is touched before a gesture, one oscillator per chord tone plus the two presence voices and no more after 200 presence updates, voice budget respected under 500 impacts in an instant, filter cutoff stays audible across the depth range. The presence curve is asserted by shape rather than existence: exactly zero below its floor, monotonic as the lurker closes, capped below the chord it must not swallow, and a pulse that quickens without becoming a buzz. A `NaN` or `Infinity` nearness is asserted to produce silence rather than reach an `AudioParam`. Two more cover the bed's key: after a retune every chord voice is in the new specimen's chord and the impact notes are pitched off it (the audible half, which is the half nothing else could catch), and a specimen with an unusable chord is refused outright rather than half-applied, because the drone's chord is also where impact notes come from.
-- `tests/app.test.mjs` (12) — boots `index.html` verbatim in jsdom, checks that pressing swells the pointer field where hovering does not, and checks the app/marker agreement in both directions (no id the app reads is missing, no id the page declares is dead), that frames populate the read-out, that pointer input moves the creature and generates wake, that shift selects pull, that pause freezes and resumes, that audio only starts on a gesture, that a reroll hands the audio layer the specimen that is now swimming rather than leaving the bed on the old key, and that every module `index.html` loads resolves on disk (jsdom does not fetch `src=` modules, so a renamed file is a blank page nothing else would catch).
+- `tests/app.test.mjs` (19) — boots `index.html` verbatim in jsdom, checks that pressing swells the pointer field where hovering does not, and checks the app/marker agreement in both directions (no id the app reads is missing, no id the page declares is dead), that frames populate the read-out, that pointer input moves the creature and generates wake, that shift selects pull, that pause freezes and resumes, that audio only starts on a gesture, that a reroll hands the audio layer the specimen that is now swimming rather than leaving the bed on the old key, and that every module `index.html` loads resolves on disk (jsdom does not fetch `src=` modules, so a renamed file is a blank page nothing else would catch).
 
 These found every real bug listed under *Verified* below.
 
 ### In a browser
 
-`tools/check.sh --browser` runs `tools/browser-check.mjs` through `tools/run-browser-check.sh`, which points Playwright at the Chromium in the Nix store and answers `https://fluxpond.test/**` from disk, so no socket is bound. Beyond the behavioural assertions it pins **five golden frames**, and logs the read-out of each so the image and the numbers can be checked against each other:
+`tools/check.sh --browser` runs `tools/browser-check.mjs` through `tools/run-browser-check.sh`, which uses the Playwright and Chromium the environment names — the ones `nix develop` exports — or finds a browser in the store, and answers `https://fluxpond.test/**` from disk, so no socket is bound. It logs which of each it ended up with: the goldens are pixel comparisons, and a mismatch is worth far less triage with the version in hand. Beyond the behavioural assertions it pins **five golden frames**, and logs the read-out of each so the image and the numbers can be checked against each other:
 
 | frame | the state | what it is there to catch |
 | --- | --- | --- |
@@ -144,9 +157,23 @@ Then the phone shapes. Everything a finger has to reach is hit-tested at 390x844
 
 Then the two files against the shape a preview pane makes — markup injected into an `allow-scripts` frame with an opaque origin, no base URL. `index.html` does not boot there (asserted, not assumed: if it ever did, `flux-pond.html` would be a candidate for deletion); `flux-pond.html` boots, paints the trench, and rerolls a specimen even though that frame refuses the history write the desktop page uses to put the seed in the URL. The same file is also opened from `file://` in a second context, where it needs no requests at all.
 
+### In CI
+
+`.github/workflows/ci.yml` runs both halves on `ubuntu-24.04` under the same pinned inputs — `nix flake check`, then `nix develop --command bash tools/check.sh --browser`. There is no `setup-node` and no `npx playwright install`: Nix is the toolchain, and the only downloads are the three npm tarballs the fixed-output derivations verify against `package-lock.json`.
+
+Two ways a suite like this can be green while checking nothing are closed deliberately, because `tools/check.sh` is built to keep going on a laptop that has no browser and no jsdom:
+
+- The flake's derivation fails if any layer printed `SKIP`, so a missing library cannot skip a whole test file into a pass.
+- Actions sets `CI=true`, under which a golden frame that is not committed is a failure rather than something to record and then grade yourself against. The same applies to a comparison skipped for want of pngjs. (The pngjs branch is the one path here not exercised locally — pngjs was always findable, so it could only be reasoned about, not observed.)
+
+The browser job uploads `.tmp/shots` when it fails. A runner that paints different pixels from the machine that recorded the goldens is the one failure this project can have, and it is unreadable without the frames it actually drew.
+
 ## Verified
 
 Observed, on Node v24.20 with the current patch: **82 automated checks pass** (`tools/check.sh`) — 40 simulation, 11 render, 12 audio, 19 app — plus `node --check` on all 13 source/test/tool JS files. **And 64 checks pass in headless Chromium** (`tools/check.sh --browser`): on the real page over `https://` including the five golden frames, three phone viewport layouts, the single file opened from `file://`, and the single file opened in an opaque-origin preview frame.
+
+The same 82 and 64 hold under the flake, on a toolchain other than the one that recorded them — observed here with `nix flake check` on node 24.21.0, and with `nix develop --command bash tools/check.sh --browser` on playwright-core 1.63.0 with Chromium build 1243, against goldens recorded on Playwright 1.58.2 with Chromium build 1248. Five golden comparisons, none of them written, worst margin 0.097 % of pixels moved (`tow-10s`) against a 3 % budget. The two CI guards were exercised too: with `CI=true` and an empty golden directory the browser check exits 1 with five named failures and writes no reference frames at all.
+
 
 Bugs found by those tests and fixed, each with a reproducing seed or input:
 
