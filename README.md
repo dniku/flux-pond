@@ -1,6 +1,6 @@
 # Flux Pond
 
-[![CI](https://github.com/dniku/flux-pond/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dniku/flux-pond/actions/workflows/ci.yml)
+[![CI](https://github.com/dniku/flux-pond/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dniku/flux-pond/actions/workflows/ci.yml) **[▶ Play it live](https://raw.githack.com/dniku/flux-pond/main/index.html)**
 
 A procedurally generated buoyant creature in a shallow, stratified trench that you steer with cursor pressure — and a toy about one specific emergent thing: **a body floating at a waterline**. It also gets hungry, and has to dive into the plankton layer to eat, which is the difference between a balloon that bobs and an animal with somewhere to be — and below the plankton band something bigger is sitting in the dark, which is what turns somewhere to be into a decision.
 
@@ -31,6 +31,19 @@ node tools/build-standalone.mjs   # src/page.html + src/*.js -> index.html
 The ways of opening this project do not agree about what they are allowed to fetch. `file://` refuses module imports outright, and a preview pane that injects markup into a sandboxed frame has no base URL to resolve a module against; a page that imports its modules paints its panels over a black canvas in both, which reads as a broken toy rather than a blocked request. Observed exactly that on a phone, with the seed read-out still showing its `…` placeholder — which is why the bundle is inlined into the one file you open, rather than a second file beside it that works in the places the first does not.
 
 It is generated, and a test rebuilds it and compares bytes, so a stale `index.html` fails the suite rather than quietly showing old behaviour. `src/` is the source of truth: `src/page.html` is the markup, `src/flux-pond.js` the simulation, `src/render.js`, `src/audio.js`, `src/app.js` and `src/main.js` the rest.
+
+### Live, from the repo
+
+**<https://raw.githack.com/dniku/flux-pond/main/index.html>** runs the toy straight out of this repo — no build, no hosting — which works only because the page is one file that asks for nothing else. That it really is this file is worth checking rather than taking on faith:
+
+```bash
+curl -s https://raw.githack.com/dniku/flux-pond/main/index.html | sha256sum
+sha256sum index.html                             # same digest
+```
+
+Two things to expect. rawgithack puts a one-time **External Content Notice** in front of any HTML it proxies, with an *Open the page* button: the toy is behind that click, and it remembers. And it caches for about a minute, so a fresh push takes a moment to appear — `rawcdn.githack.com` is the edge-cached mirror of the same path, and a commit SHA instead of `main` gives a link that cannot move. It is somebody else's server, so it is a demo path; the file in this repo is the artifact.
+
+`raw.githubusercontent.com` will not work, and not for the usual reason: GitHub serves it as `text/plain` with `content-security-policy: default-src 'none'; sandbox`, and Chromium runs no script from it whatsoever — checked, no console errors, nothing booted. Stripping that is the whole job rawgithack exists to do.
 
 ## Controls
 
