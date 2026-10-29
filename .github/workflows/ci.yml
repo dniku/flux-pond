@@ -1,0 +1,67 @@
+name: CI
+
+# The toy itself needs nothing to run, so everything here checks the checks: the
+# browser-free suite under the pinned Nix inputs, then the real page painted by
+# headless Chromium and compared against tests/golden.
+#
+# Nix supplies node, Playwright and Chromium from flake.nix -- no setup-node, no
+# npm install, no `npx playwright install`. The only npm downloads are the three
+# libraries nixpkgs does not carry (jsdom, pngjs, esbuild), inside fixed-output
+# derivations that package-lock.json's integrity fields verify.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Syntax, simulation, render, audio, app
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31.11.2
+
+      # `nix flake check` builds .#checks.x86_64-linux.default, which runs
+      # tools/check.sh over the fileset and fails if any layer skipped. Without
+      # that a missing jsdom, pngjs or esbuild would skip its whole file and the
+      # suite would report green; see the derivation for the grep.
+      - name: Everything that needs no browser
+        run: nix flake check --print-build-logs
+
+  browser:
+    name: Headless Chromium page and golden frames
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31.11.2
+
+      # The page over https:// from disk: it paints, the loop runs, pointer input
+      # moves the creature, the audio graph builds, three phone layouts collide
+      # with nothing, and the five golden frames match within tolerance. Actions
+      # sets CI=true, which is what stops a missing golden from being recorded and
+      # passed against itself. Not a `nix check`: Chromium needs --no-sandbox and
+      # a writable directory for the frames, which no build sandbox promises.
+      - name: Paint the page
+        run: nix develop --command bash tools/check.sh --browser
+
+      # A runner paints pixels the machine that recorded the goldens did not, and
+      # that failure is unreadable without what it actually drew.
+      - name: Upload the painted frames
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: shots
+          path: .tmp/shots
+          if-no-files-found: ignore
+          retention-days: 7
