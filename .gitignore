@@ -6,3 +6,6 @@
 
 # Bytecode from importing serve.py to test listen_target().
 __pycache__/
+
+# Test tooling from `npm install` (the app itself ships no dependencies).
+node_modules/

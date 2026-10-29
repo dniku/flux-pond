@@ -1,0 +1,17 @@
+{
+  "name": "flux-pond",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A procedurally generated buoyant creature in a stratified trench. The toy has no dependencies and needs no build; this file lists only the Node libraries the checks import, which nixpkgs does not carry (node, Playwright and Chromium come from the flake).",
+  "scripts": {
+    "test": "bash tools/check.sh",
+    "test:browser": "bash tools/check.sh --browser",
+    "build": "node tools/build-standalone.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.27.3",
+    "jsdom": "^20.0.3",
+    "pngjs": "^7.0.0"
+  }
+}
