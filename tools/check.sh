@@ -36,8 +36,14 @@ done
 echo
 echo "== tests =="
 for test_file in tests/*.test.mjs; do
-  output="$("$NODE_BIN" "$test_file" 2>&1)"
-  code=$?
+  # The `if` is load-bearing: toolchain.sh turns on errexit, so a bare
+  # assignment aborts the loop the moment a test fails, before `code=$?` can
+  # record it. A real failure then looked like a build that died for nothing.
+  if output="$("$NODE_BIN" "$test_file" 2>&1)"; then
+    code=0
+  else
+    code=$?
+  fi
   if [ $code -eq 0 ]; then
     summary="$(printf '%s' "$output" | tail -1)"
     if printf '%s' "$output" | grep -q '^SKIP'; then
