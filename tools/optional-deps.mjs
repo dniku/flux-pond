@@ -1,13 +1,20 @@
 /*
- * Locate optional test dependencies that are not installed in this project.
+ * Locate the optional test dependencies, wherever this checkout happens to live.
  *
- * There is no network here, so `npm install` is not an option; jsdom and
- * Playwright already exist in a shared `node_modules` on this host. ESM ignores
- * NODE_PATH, so the path has to be resolved absolutely.
+ * Two worlds resolve them, in this order:
  *
- * Tests that need these must call `describeMissing()` and skip themselves with a
- * clear message rather than failing, so `tools/check.sh` still reports a useful
- * result on a machine that only has Node.
+ *  1. Normal Node resolution -- the project's own `node_modules`, or the
+ *     `NODE_PATH` the nix dev shell sets (`nix develop` puts jsdom, pngjs and
+ *     esbuild there, at the versions package-lock.json pins).
+ *  2. A shared `node_modules` elsewhere on this host, searched absolutely
+ *     because ESM ignores NODE_PATH. This exists because the container this
+ *     project grew up in has no network and no way to install anything; it is a
+ *     fallback, and deliberately second, so a shell that *does* declare its
+ *     dependencies is never silently served somebody else's versions.
+ *
+ * Tests that cannot find what they need skip themselves with a clear message
+ * rather than failing, so `tools/check.sh` still reports something useful on a
+ * machine that only has Node.
  */
 import { createRequire } from 'node:module';
 import { existsSync, readdirSync } from 'node:fs';
@@ -54,12 +61,17 @@ export function findPackageDirectory(packageName) {
 /* Import an optional package, or return null when it is genuinely absent. */
 export function loadOptional(packageName) {
   const require = createRequire(import.meta.url);
-  const rootDir = findPackageDirectory(packageName);
-  if (rootDir !== null) {
-    return require(path.join(rootDir, packageName));
-  }
   try {
     return require(packageName);
+  } catch {
+    // Fall through to the shared-host search.
+  }
+  const rootDir = findPackageDirectory(packageName);
+  if (rootDir === null) {
+    return null;
+  }
+  try {
+    return require(path.join(rootDir, packageName));
   } catch {
     return null;
   }
