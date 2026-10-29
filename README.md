@@ -141,7 +141,11 @@ Three of them, as recorded — `idle-5s` is the picture at the top of this page:
 ![Held down by a pull toward the floor, stretched vertical, two phenomenon badges lit at once](tests/golden/tow-10s.png)
 ![A held press at full strength: depth 0.40, the lurker close enough to fill the left of the frame, `fleeing` lit and one flight counted](tests/golden/lurker-2s.png)
 
-A frame is made deterministic by pausing the loop, resetting the world and advancing a fixed number of fixed steps, so an image depends on the seed and not on how long the machine took to paint, and the read-out is refreshed for the frame rather than left at whatever the last 500 ms window painted. Comparison tolerates 3 % of pixels moved and a mean channel delta of 1.5: a panel that moves or disappears is tens of thousands of pixels, a badge's 160 ms pop animation is half a per cent.
+A frame is made deterministic by pausing the loop, resetting the world and advancing a fixed number of fixed steps, so an image depends on the seed and not on how long the machine took to paint, and the read-out is refreshed for the frame rather than left at whatever the last 500 ms window painted. Comparison tolerates 3 % of pixels moved and a mean channel delta of 1.5, over everything except the boxes the DOM paints over the canvas.
+
+The text boxes — `#status`, `#phenomena`, `#hint`, `#buttons`, `#toast`, `#fatal` — are read from the live page in device pixels and excluded, because typography is the one thing this project cannot pin: it ships no fonts, so a machine with a different font set lays the same panels out differently. The first CI run is what proved the split worth making: four desktop frames failed at 5.4-6.2 % of pixels moved against the 3 % budget while the phone frame passed, and the diff map of the runner's own artifact showed the whole difference to be glyphs — the hint paragraph re-wrapped onto other lines, the read-out digits a pixel apart, and the trench underneath identical to the pixel.
+
+Excluding those boxes does not let a panel go wrong unnoticed. One that moves, appears or disappears changes the trench around it, and those pixels are compared; the HUD is pinned directly by the assertions that read the DOM — read-out values, hit-testing at three viewports, which badges are lit. What the goldens are for is the painted world, and that has now reproduced across two Chromium builds and two Playwright versions.
 
 ```bash
 tools/recapture-golden.sh .tmp/review   # record frames somewhere for review

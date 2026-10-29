@@ -104,6 +104,54 @@ const PIXEL_DELTA_LIMIT = 30;
 const DIFF_PIXEL_FRACTION = 0.03;
 const MEAN_DELTA_LIMIT = 1.5;
 
+/*
+ * The boxes the DOM paints over the canvas are excluded from the comparison,
+ * because typography is the one thing this project cannot pin. It ships no
+ * fonts, so a machine with a different font set lays the panels out
+ * differently: on a GitHub runner the hint paragraph wraps to other lines and
+ * the read-out digits land a pixel apart, which moved 5-6 % of the frame while
+ * the trench underneath matched to the pixel. Observed, not theorised -- the
+ * first CI run failed exactly that way, and its diff map was all text.
+ *
+ * Excluding the boxes does not mean a panel can go wrong unnoticed. A panel that
+ * moves, appears or disappears changes the trench pixels around it, which are
+ * compared; and the HUD is pinned by the assertions that read the DOM -- the
+ * read-out values, the hit-testing at three phone viewports, the badges -- which
+ * is where a layout bug like the one this suite caught first belongs anyway.
+ */
+const HUD_SELECTORS = '#status, #phenomena, #hint, #buttons, #toast, #fatal';
+// Borders, shadows and focus rings spill a little past the element box.
+const HUD_PADDING = 2;
+
+/*
+ * The HUD boxes in the screenshot's own pixels. The page lays out in CSS pixels
+ * and Playwright paints at the context's device scale factor, which is what
+ * `devicePixelRatio` reports from inside it.
+ */
+async function hudBoxes(page) {
+  const { scale, boxes } = await page.evaluate((selector) => {
+    return {
+      scale: window.devicePixelRatio,
+      boxes: [...document.querySelectorAll(selector)].map((element) => {
+        const rect = element.getBoundingClientRect();
+        return { x: rect.x, y: rect.y, w: rect.width, h: rect.height };
+      })
+    };
+  }, HUD_SELECTORS);
+  return boxes
+    .filter((rect) => rect.w > 0 && rect.h > 0)
+    .map((rect) => ({
+      x: Math.max(0, Math.floor(rect.x * scale) - HUD_PADDING),
+      y: Math.max(0, Math.floor(rect.y * scale) - HUD_PADDING),
+      w: Math.ceil(rect.w * scale) + 2 * HUD_PADDING,
+      h: Math.ceil(rect.h * scale) + 2 * HUD_PADDING
+    }));
+}
+
+function insideBoxes(x, y, boxes) {
+  return boxes.some((box) => x >= box.x && x < box.x + box.w && y >= box.y && y < box.y + box.h);
+}
+
 const GOLDEN_FRAMES = [
   { name: 'idle-5s', seconds: 5.0, pull: false },
   { name: 'hunt-40s', seconds: 40.0, pull: false },
@@ -162,7 +210,7 @@ async function captureStableFrame(page, frame) {
   return { readout, buffer };
 }
 
-function compareWithGolden(name, buffer) {
+function compareWithGolden(name, buffer, boxes) {
   if (png === null) {
     if (REQUIRE_GOLDEN) {
       check(`golden ${name} was compared`, false, 'pngjs is unavailable, so nothing was compared');
@@ -188,32 +236,41 @@ function compareWithGolden(name, buffer) {
     check(`golden ${name}`, false, `${actual.width}x${actual.height} != golden ${golden.width}x${golden.height}`);
     return;
   }
+  if (process.env.DUMP_HUD === '1') {
+    console.log(`  hud boxes ${name}: ${JSON.stringify(boxes)}`);
+  }
   const total = actual.width * actual.height;
+  let compared = 0;
   let moved = 0;
   let sum = 0;
   for (let i = 0; i < total; i += 1) {
+    if (insideBoxes(i % actual.width, Math.floor(i / actual.width), boxes)) {
+      continue;
+    }
     const o = i * 4;
     const delta =
       Math.abs(actual.data[o] - golden.data[o]) +
       Math.abs(actual.data[o + 1] - golden.data[o + 1]) +
       Math.abs(actual.data[o + 2] - golden.data[o + 2]);
+    compared += 1;
     sum += delta;
     if (delta > PIXEL_DELTA_LIMIT) {
       moved += 1;
     }
   }
-  const fraction = moved / total;
-  const mean = sum / (3 * total);
+  const fraction = moved / compared;
+  const mean = sum / (3 * compared);
   // Report the margin even when it passes: a golden that quietly drifts up to
   // its threshold is as useful as one that fails.
   console.log(
-    `  golden ${name}: ${(fraction * 100).toFixed(3)}% of pixels moved, mean delta ${mean.toFixed(3)}` +
-      ` (limits ${DIFF_PIXEL_FRACTION * 100}% and ${MEAN_DELTA_LIMIT})`
+    `  golden ${name}: ${(fraction * 100).toFixed(3)}% of ${compared} compared pixels moved,` +
+      ` mean delta ${mean.toFixed(3)} (limits ${DIFF_PIXEL_FRACTION * 100}% and ${MEAN_DELTA_LIMIT};` +
+      ` ${total - compared} px of HUD excluded)`
   );
   check(
     `golden ${name} matches`,
     fraction <= DIFF_PIXEL_FRACTION && mean <= MEAN_DELTA_LIMIT,
-    `${(fraction * 100).toFixed(2)}% of pixels moved (limit ${DIFF_PIXEL_FRACTION * 100}%), mean delta ${mean.toFixed(2)}`
+    `${(fraction * 100).toFixed(2)}% of compared pixels moved (limit ${DIFF_PIXEL_FRACTION * 100}%), mean delta ${mean.toFixed(2)}`
   );
 }
 
@@ -405,7 +462,9 @@ async function main() {
   for (const frame of GOLDEN_FRAMES) {
     const { readout, buffer } = await captureStableFrame(page, frame);
     console.log(`  ${frame.name}: ${readout}`);
-    compareWithGolden(frame.name, buffer);
+    // Recomputed per frame: which badges are lit, and so how much of the
+    // screen the HUD covers, is part of the state being pinned.
+    compareWithGolden(frame.name, buffer, await hudBoxes(page));
   }
   await page.evaluate(() => {
     // Back to a fresh world: the golden frames ran 45 s of simulation, and the
@@ -609,7 +668,7 @@ async function main() {
   await phone.waitForTimeout(650);
   const phoneFrame = await captureStableFrame(phone, { name: 'phone-5s', seconds: 5.0, pull: false });
   console.log(`  phone-5s: ${phoneFrame.readout}`);
-  compareWithGolden('phone-5s', phoneFrame.buffer);
+  compareWithGolden('phone-5s', phoneFrame.buffer, await hudBoxes(phone));
 
   // A tap, not a click: the control has to work as touch. After the frame, so
   // the frame shows the default state rather than the toggled one.
