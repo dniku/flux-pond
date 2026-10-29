@@ -84,6 +84,11 @@ function check(name, condition, detail) {
  */
 const GOLDEN_DIR = process.env.GOLDEN_DIR ?? path.join(root, 'tests', 'golden');
 const UPDATE_GOLDEN = process.env.UPDATE_GOLDEN === '1';
+// GitHub Actions sets CI=true. There, writing a reference frame and then grading
+// against it proves nothing, and a comparison skipped for want of pngjs reports
+// green -- so both are failures rather than fallbacks. UPDATE_GOLDEN does not
+// override this, and no workflow sets it.
+const REQUIRE_GOLDEN = process.env.CI === 'true';
 const png = loadOptional('pngjs');
 
 // Summed |dr|+|dg|+|db| above which a pixel counts as moved, and how much of
@@ -159,11 +164,19 @@ async function captureStableFrame(page, frame) {
 
 function compareWithGolden(name, buffer) {
   if (png === null) {
+    if (REQUIRE_GOLDEN) {
+      check(`golden ${name} was compared`, false, 'pngjs is unavailable, so nothing was compared');
+      return;
+    }
     console.log(`  SKIP golden ${name}: pngjs is unavailable, cannot decode`);
     return;
   }
   mkdirSync(GOLDEN_DIR, { recursive: true });
   const goldenPath = path.join(GOLDEN_DIR, `${name}.png`);
+  if (REQUIRE_GOLDEN && !existsSync(goldenPath)) {
+    check(`golden ${name} is committed`, false, `${path.relative(root, goldenPath)} is missing`);
+    return;
+  }
   if (UPDATE_GOLDEN || !existsSync(goldenPath)) {
     writeFileSync(goldenPath, buffer);
     console.log(`  wrote golden ${name} -> ${path.relative(root, goldenPath)}`);
